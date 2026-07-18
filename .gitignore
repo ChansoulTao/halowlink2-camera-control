@@ -1,0 +1,23 @@
+.DS_Store
+
+# Device-specific backups and inspection output
+work/backups/
+work/inspection/
+work/snapshot/
+
+# Unrelated firmware references and experimental CarChat project
+work/reference/
+work/car-chat/
+
+# Package build intermediates
+work/ipk-build-*/
+work/ipk-control/
+work/ipk-debian-binary
+
+# Local release archives
+outputs/*.tar.gz
+outputs/luci-app-camera-network_1.0.0-1_all.ipk
+outputs/luci-app-camera-network_1.0.1-1_all.ipk
+
+# Cache-busting deployment snapshots; index.js is the maintained source
+work/camera-network/root/www/luci-static/resources/view/camera-network/index-v*.js

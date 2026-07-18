@@ -1,0 +1,99 @@
+#!/bin/sh
+
+OUT=/tmp/camera-network-boot.json
+uptime_seconds() { cut -d. -f1 /proc/uptime; }
+AP_READY=$(uptime_seconds)
+CLIENT_READY=
+CAMERA_READY=
+TEMPERATURE=
+THERMAL_MITIGATION=0
+LAST_TEMP_SAMPLE=-10
+CLIENT_TEMPERATURES='{}'
+LAST_CLIENT_TEMP_SAMPLE=-10
+
+write_state() {
+	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s}\n' \
+		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" "$CLIENT_TEMPERATURES" > "$OUT.tmp"
+	mv "$OUT.tmp" "$OUT"
+}
+
+sample_client_temperatures() {
+	local ASSOCIATED SECTION MAC IP STATS_FILE SSH_PID WATCHDOG STATS VALUE MITIGATION JSON COMMA
+	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
+	JSON='{'
+	COMMA=
+	for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.remote_paired='1'$/\1/p"); do
+		MAC=$(uci -q get camera_network.$SECTION.mac | tr 'a-f' 'A-F')
+		IP=$(uci -q get camera_network.$SECTION.last_ip)
+		[ -n "$MAC" ] && [ -n "$IP" ] || continue
+		echo "$ASSOCIATED" | grep -q "$MAC" || continue
+		case "$IP" in *[!0-9.]*|'') continue ;; esac
+
+		STATS_FILE="/tmp/camera-network-client-stats.$$"
+		ssh -q -y -I 4 -i /etc/dropbear/camera-network-client-key "root@$IP" \
+			"/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null" > "$STATS_FILE" 2>/dev/null &
+		SSH_PID=$!
+		( sleep 5; kill "$SSH_PID" 2>/dev/null ) &
+		WATCHDOG=$!
+		wait "$SSH_PID" 2>/dev/null
+		kill "$WATCHDOG" 2>/dev/null
+		wait "$WATCHDOG" 2>/dev/null
+		STATS=$(cat "$STATS_FILE" 2>/dev/null)
+		rm -f "$STATS_FILE"
+
+		VALUE=$(printf '%s\n' "$STATS" |
+			sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' |
+			head -n1)
+		MITIGATION=$(printf '%s\n' "$STATS" |
+			sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
+			head -n1)
+		case "$VALUE" in ''|*[!0-9-]*) continue ;; esac
+		case "$MITIGATION" in ''|*[!0-9]*) MITIGATION=0 ;; esac
+		JSON="${JSON}${COMMA}\"${MAC}\":{\"temperature\":${VALUE},\"thermalMitigation\":${MITIGATION},\"ip\":\"${IP}\"}"
+		COMMA=,
+	done
+	CLIENT_TEMPERATURES="${JSON}}"
+}
+
+while true; do
+	NOW=$(uptime_seconds)
+	if [ $((NOW - LAST_TEMP_SAMPLE)) -ge 5 ]; then
+		STATS=$(/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null)
+		VALUE=$(printf '%s\n' "$STATS" |
+			sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' |
+			head -n1)
+		MITIGATION=$(printf '%s\n' "$STATS" |
+			sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
+			head -n1)
+		case "$VALUE" in
+			''|*[!0-9-]*) ;;
+			*) TEMPERATURE=$VALUE ;;
+		esac
+		case "$MITIGATION" in
+			''|*[!0-9]*) ;;
+			*) THERMAL_MITIGATION=$MITIGATION ;;
+		esac
+		LAST_TEMP_SAMPLE=$NOW
+	fi
+	if [ $((NOW - LAST_CLIENT_TEMP_SAMPLE)) -ge 10 ]; then
+		sample_client_temperatures
+		LAST_CLIENT_TEMP_SAMPLE=$NOW
+	fi
+	if [ -z "$CLIENT_READY" ] && iwinfo wlan0 assoclist 2>/dev/null | grep -qE '([0-9A-F]{2}:){5}[0-9A-F]{2}'; then
+		CLIENT_READY=$NOW
+	fi
+	if [ -z "$CAMERA_READY" ]; then
+		ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'A-F' 'a-f')
+		for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.pinned='1'$/\1/p"); do
+			MAC=$(uci -q get camera_network.$SECTION.mac | tr 'A-F' 'a-f')
+			[ -n "$MAC" ] || continue
+			echo "$ASSOCIATED" | grep -q "$MAC" && continue
+			if /usr/sbin/brctl showmacs br-lan 2>/dev/null | tr 'A-F' 'a-f' | grep -q "$MAC"; then
+				CAMERA_READY=$NOW
+				break
+			fi
+		done
+	fi
+	write_state
+	sleep 2
+done

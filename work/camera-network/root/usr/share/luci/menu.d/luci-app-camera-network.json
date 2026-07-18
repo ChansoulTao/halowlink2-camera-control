@@ -1,0 +1,13 @@
+{
+	"admin/camera-network": {
+		"title": "Camera Network",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "camera-network/index-v32"
+		},
+		"depends": {
+			"acl": ["luci-app-camera-network"]
+		}
+	}
+}

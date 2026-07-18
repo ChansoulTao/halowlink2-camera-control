@@ -1,0 +1,35 @@
+#!/bin/sh
+
+mode="$1"
+[ "$mode" = "apply" ] && mode="$(uci -q get camera_network.settings.leds_enabled)"
+[ "$mode" = "1" ] && mode="on"
+[ "$mode" = "0" ] && mode="off"
+[ -n "$mode" ] || mode="on"
+
+case "$mode" in
+	off)
+		uci -q batch <<'EOF'
+set camera_network.settings=led_control
+set camera_network.settings.leds_enabled='0'
+commit camera_network
+EOF
+		for led in /sys/class/leds/rgb:led*; do
+			[ -d "$led" ] || continue
+			echo none > "$led/trigger"
+			echo 0 > "$led/brightness"
+		done
+		;;
+	on)
+		uci -q batch <<'EOF'
+set camera_network.settings=led_control
+set camera_network.settings.leds_enabled='1'
+commit camera_network
+EOF
+		/etc/init.d/led restart
+		[ -e /sys/class/leds/rgb:led1/trigger ] && echo none > /sys/class/leds/rgb:led1/trigger
+		[ -e /sys/class/leds/rgb:led1/brightness ] && echo 255 > /sys/class/leds/rgb:led1/brightness
+		;;
+	*) exit 1 ;;
+esac
+
+echo "$mode"

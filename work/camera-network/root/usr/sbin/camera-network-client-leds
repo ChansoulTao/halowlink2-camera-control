@@ -1,0 +1,14 @@
+#!/bin/sh
+
+ip="$1"
+mode="$2"
+
+case "$ip" in
+	*[!0-9.]*|'' ) exit 2 ;;
+esac
+case "$mode" in
+	on|off) ;;
+	*) exit 2 ;;
+esac
+
+exec ssh -y -I 6 -i /etc/dropbear/camera-network-client-key "root@$ip" "/usr/sbin/camera-network-leds $mode"

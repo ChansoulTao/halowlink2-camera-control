@@ -1,0 +1,26 @@
+{
+	"luci-app-camera-network": {
+		"description": "Grant access to the Camera Network dashboard",
+		"read": {
+			"uci": ["camera_network"],
+			"ubus": {
+				"system": ["board", "info"],
+				"network.interface": ["dump"],
+				"luci-rpc": ["getDHCPLeases", "getHostHints", "getNetworkDevices", "getWirelessDevices"],
+				"iwinfo": ["info", "assoclist"]
+			},
+			"file": {
+				"/bin/ping": ["exec"],
+				"/usr/sbin/camera-network-leds": ["exec"],
+				"/usr/sbin/camera-network-client-leds": ["exec"],
+				"/usr/sbin/halow-mode": ["exec"],
+				"/usr/sbin/brctl": ["exec"],
+				"/sbin/logread": ["exec"],
+				"/tmp/camera-network-boot.json": ["read"]
+			}
+		},
+		"write": {
+			"uci": ["camera_network"]
+		}
+	}
+}
