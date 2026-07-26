@@ -16,6 +16,7 @@ pages.
 - Automatic Client-to-camera association
 - Reachability and latency checks
 - AP and remote Client indicator-light controls
+- Built-in English/Chinese interface switch with a remembered preference
 - Responsive light/dark interface designed for iPad and phone use
 - Dismissible warnings for weak links, offline devices, and high temperatures
 - Boot-to-HaLow-ready timing
@@ -38,13 +39,13 @@ Download the latest `.ipk` from `outputs/`, copy it to `/tmp/` on the
 HaLowLink 2, then install it over SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+opkg install /tmp/luci-app-camera-network_1.0.3-1_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.3-1_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control

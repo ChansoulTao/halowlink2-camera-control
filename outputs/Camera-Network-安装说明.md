@@ -4,12 +4,12 @@
 
 ## 安装
 
-1. 将 `luci-app-camera-network_1.0.2-1_all.ipk` 上传到设备的 `/tmp/`。
+1. 将 `luci-app-camera-network_1.0.3-1_all.ipk` 上传到设备的 `/tmp/`。
 2. SSH 登录设备。
 3. 执行：
 
    ```sh
-   opkg install /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+   opkg install /tmp/luci-app-camera-network_1.0.3-1_all.ipk
    ```
 
 4. 浏览器打开设备 IP。登录后会进入 Camera Network。
@@ -21,7 +21,7 @@
 上传新版安装包后执行：
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.3-1_all.ipk
 ```
 
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。

@@ -7,6 +7,180 @@
 'require ui';
 'require view';
 
+const luciTranslate = _;
+const cameraChinese = {
+	'%d HaLow clients': '%d 个 HaLow 客户端',
+	'%d cameras': '%d 台摄影机',
+	'%d clients': '%d 个客户端',
+	'%d connected': '%d 个已连接',
+	'%d device(s) did not reply to the latency test': '%d 台设备未响应延迟测试',
+	'%d min %d sec': '%d 分 %d 秒',
+	'%d pinned cameras offline': '%d 台置顶摄影机离线',
+	'%d saved cameras are offline': '%d 台已保存摄影机离线',
+	'%d seconds': '%d 秒',
+	'%s and %s online': '%s和%s在线',
+	'1 HaLow client': '1 个 HaLow 客户端',
+	'1 camera': '1 台摄影机',
+	'1 client': '1 个客户端',
+	'1 pinned camera offline': '1 台置顶摄影机离线',
+	'1 saved camera is offline': '1 台已保存摄影机离线',
+	'AP monitor ready': 'AP 监测服务就绪',
+	'All device lights are disabled': '所有设备指示灯均已关闭',
+	'All devices': '全部设备',
+	'Attention': '需要注意',
+	'Authentication started': '开始认证',
+	'Automatic network indication enabled': '自动网络状态指示已启用',
+	'Automatically detected': '自动检测',
+	'CAMERA NETWORK': '摄影机网络',
+	'Camera': '摄影机',
+	'Camera name': '摄影机名称',
+	'Camera network telemetry refreshes every 2 seconds.': '摄影机网络状态每 2 秒更新一次。',
+	'Camera pinned': '摄影机已置顶',
+	'Camera profile saved': '摄影机资料已保存',
+	'Camera unpinned': '摄影机已取消置顶',
+	'Channel': '信道',
+	'Check network': '检查网络',
+	'Choose camera': '选择摄影机',
+	'Client control failed — check pairing and connection': '客户端控制失败——请检查配对与连接',
+	'Client lights': '客户端指示灯',
+	'Client lights disabled': '客户端指示灯已关闭',
+	'Client lights enabled': '客户端指示灯已打开',
+	'Client paired — refreshing': '客户端已配对——正在刷新',
+	'Client signal history — last 5 minutes': '客户端信号历史——最近 5 分钟',
+	'Client temperature alert': '客户端温度警告',
+	'Client → camera connections': '客户端 → 摄影机连接',
+	'Collecting samples…': '正在收集数据…',
+	'Collecting samples… the curve appears after two refreshes.': '正在收集数据…刷新两次后将显示曲线。',
+	'Configuration exported': '配置已导出',
+	'Configuration restored — refreshing': '配置已恢复——正在刷新',
+	'Connected for %d seconds': '已连接 %d 秒',
+	'Critical chip temperature': '芯片温度危险',
+	'Critical temperature': '温度危险',
+	'DHCP lease': 'DHCP 租约',
+	'Details': '详情',
+	'Device hidden': '设备已隐藏',
+	'Device restored': '设备已恢复显示',
+	'Discovered devices': '发现的设备',
+	'Dismiss': '关闭',
+	'Dropouts': '断线次数',
+	'Edit': '编辑',
+	'Elevated temperature': '温度偏高',
+	'Emergency chip temperature': '芯片温度紧急',
+	'Emergency — reduce load immediately': '紧急——请立即降低负载',
+	'Excellent': '极佳',
+	'Exit monitor': '退出监看',
+	'Export': '导出',
+	'First HaLow client': '首个 HaLow 客户端',
+	'First pinned camera': '首台置顶摄影机',
+	'Good': '良好',
+	'HaLow Client': 'HaLow 客户端',
+	'HaLow access point': 'HaLow 接入点',
+	'HaLow chip temperature': 'HaLow 芯片温度',
+	'HaLow client initialized': 'HaLow 客户端已初始化',
+	'HaLow clients': 'HaLow 客户端',
+	'HaLow connection history — this boot': 'HaLow 连接记录——本次开机',
+	'HaLow link': 'HaLow 链路',
+	'HaLow link connected': 'HaLow 链路已连接',
+	'HaLow link disconnected': 'HaLow 链路已断开',
+	'HaLow link is disconnected': 'HaLow 链路已断开',
+	'HaLow production console · Live telemetry': 'HaLow 摄影制作控制台 · 实时状态',
+	'Healthy': '正常',
+	'Hidden': '已隐藏',
+	'Hide': '隐藏',
+	'High chip temperature': '芯片温度过高',
+	'Import': '导入',
+	'Indicator lights': '指示灯',
+	'Indicator lights disabled': '指示灯已关闭',
+	'Indicator lights enabled': '指示灯已打开',
+	'Invalid configuration file': '配置文件无效',
+	'Last recovery': '最近恢复',
+	'Last session': '上次连接',
+	'Live': '实时',
+	'Low signal-to-noise ratio: %d dB': '信噪比过低：%d dB',
+	'MAC address': 'MAC 地址',
+	'Management IP unavailable': '管理 IP 不可用',
+	'Manual selection': '手动选择',
+	'Measured continuously by the AP, even when this page is closed.': '由 AP 持续测量，即使关闭本页面也不会停止。',
+	'Merge %d saved device profiles into this controller?': '将 %d 个已保存设备资料合并到此控制器？',
+	'Monitor': '监看',
+	'Network neighbor': '网络邻居',
+	'No HaLow client connected': '没有 HaLow 客户端连接',
+	'No camera detected': '未检测到摄影机',
+	'No connection events recorded in this boot.': '本次开机尚无连接事件记录。',
+	'No matching devices.': '没有符合条件的设备。',
+	'No reply': '无响应',
+	'No signal': '无信号',
+	'Noise': '噪声',
+	'Note / position': '备注 / 位置',
+	'Off': '关闭',
+	'Offline': '离线',
+	'On': '打开',
+	'Online': '在线',
+	'Open or close sidebar': '打开或关闭侧边栏',
+	'Pair': '配对',
+	'Pair required': '需要配对',
+	'Pairing failed — authorize this AP on the Client': '配对失败——请在客户端授权此 AP',
+	'Pin at least one camera below': '请在下方至少置顶一台摄影机',
+	'Pin camera': '置顶摄影机',
+	'Pin the camera below, then select it here.': '请先在下方置顶摄影机，再在此选择。',
+	'Pinned cameras on the same HaLow bridge port are matched automatically.': '系统会自动匹配同一 HaLow 网桥端口上的置顶摄影机。',
+	'Pinned only': '仅置顶',
+	'Power-on recovery — this boot': '开机恢复——本次开机',
+	'Power-on → HaLow ready': '通电 → HaLow 就绪',
+	'Reachable': '可访问',
+	'Ready to shoot': '可以拍摄',
+	'Remote HaLow chip temperature': '远程 HaLow 芯片温度',
+	'Restore': '恢复',
+	'Saved static device': '已保存的静态设备',
+	'Search name, IP or MAC': '搜索名称、IP 或 MAC',
+	'Shaded gaps mark signal loss. The number shows how long reconnection took.': '阴影区表示信号中断，数字表示重新连接所用时间。',
+	'Signal history — last 5 minutes': '信号历史——最近 5 分钟',
+	'Source': '来源',
+	'Switch to Chinese': '切换到中文',
+	'Switch to English': '切换到英文',
+	'Temperature normal': '温度正常',
+	'Test': '测试',
+	'Testing…': '正在测试…',
+	'Thermal protection': '温度保护',
+	'This boot': '本次开机',
+	'Unable to change indicator lights': '无法更改指示灯状态',
+	'Unpin camera': '取消置顶摄影机',
+	'Updated': '更新时间',
+	'Uptime: %s': '运行时间：%s',
+	'Very weak': '非常弱',
+	'Waiting for clients to connect…': '正在等待客户端连接…',
+	'Waiting for sensor…': '正在等待温度传感器…',
+	'Waiting…': '等待中…',
+	'Warning 75°C · Critical 85°C': '警告 75°C · 危险 85°C',
+	'Weak': '较弱',
+	'Weak HaLow signal: %d dBm': 'HaLow 信号较弱：%d dBm',
+	'disconnected': '已断开',
+	'frequent dropouts': '频繁断线',
+	'low SNR': '信噪比低',
+	'slow recovery': '恢复缓慢',
+	'temperature unavailable': '温度不可用',
+	'thermal mitigation events': '温度保护事件',
+	'thermal protection': '温度保护',
+	'weak signal': '信号较弱'
+};
+
+function cameraLanguage() {
+	const saved = window.localStorage.getItem('cameraLanguage');
+	if (saved === 'zh' || saved === 'en')
+		return saved;
+	const browserLanguage = document.documentElement.lang || navigator.language || '';
+	return /^zh/i.test(browserLanguage) ? 'zh' : 'en';
+}
+
+function t(source) {
+	return cameraLanguage() === 'zh' ? (cameraChinese[source] || source) : luciTranslate(source);
+}
+
+function toggleCameraLanguage() {
+	window.localStorage.setItem('cameraLanguage', cameraLanguage() === 'zh' ? 'en' : 'zh');
+	window.location.reload();
+}
+
 const callBoard = rpc.declare({ object: 'system', method: 'board' });
 const callSystemInfo = rpc.declare({ object: 'system', method: 'info' });
 const callNetworkDump = rpc.declare({ object: 'network.interface', method: 'dump' });
@@ -62,6 +236,7 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-console-subtitle { color:#7f8792; font-size:.78rem; text-transform:uppercase; letter-spacing:.12em; }
 .camera-dashboard .camera-live-dot { width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12); }
 .camera-dashboard .camera-toolbar-actions { display:flex;align-items:center;gap:.6rem; }
+.camera-dashboard .camera-language-button { min-width:3.1rem;padding-left:.65rem;padding-right:.65rem; }
 .camera-dashboard .camera-sidebar-toggle { background:#242932 !important;border:1px solid #3a414c !important; }
 .camera-dashboard.camera-monitor-mode .camera-config-only { display:none !important; }
 .camera-dashboard .camera-ready-banner { display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem 1.2rem;margin-bottom:1rem;border-radius:10px;border:1px solid var(--camera-border); }
@@ -451,11 +626,11 @@ async function toggleAllLEDs(button) {
 		button.setAttribute('aria-pressed', next ? 'true' : 'false');
 		button.replaceChildren(
 			E('span', { class:'camera-led-switch-track' }, E('span', { class:'camera-led-switch-knob' })),
-			E('span', { class:'camera-led-switch-label' }, next ? _('On') : _('Off'))
+			E('span', { class:'camera-led-switch-label' }, next ? t('On') : t('Off'))
 		);
-		showCameraToast(next ? _('Indicator lights enabled') : _('Indicator lights disabled'));
+		showCameraToast(next ? t('Indicator lights enabled') : t('Indicator lights disabled'));
 	} catch (error) {
-		showCameraToast(_('Unable to change indicator lights'), true);
+		showCameraToast(t('Unable to change indicator lights'), true);
 	} finally {
 		button.disabled = false;
 	}
@@ -469,10 +644,10 @@ function renderLEDControl() {
 		click:ev => toggleAllLEDs(ev.currentTarget)
 	}, [
 		E('span', { class:'camera-led-switch-track' }, E('span', { class:'camera-led-switch-knob' })),
-		E('span', { class:'camera-led-switch-label' }, enabled ? _('On') : _('Off'))
+		E('span', { class:'camera-led-switch-label' }, enabled ? t('On') : t('Off'))
 	]);
 	return E('div', { class:'cbi-section camera-led-control camera-config-only' }, [
-		E('div', {}, [E('strong', {}, _('Indicator lights')), E('small', {}, enabled ? _('Automatic network indication enabled') : _('All device lights are disabled'))]),
+		E('div', {}, [E('strong', {}, t('Indicator lights')), E('small', {}, enabled ? t('Automatic network indication enabled') : t('All device lights are disabled'))]),
 		button
 	]);
 }
@@ -504,7 +679,7 @@ function clientDisplayName(mac, fallbackToMac) {
 	}
 	if (client.name && String(client.name).trim())
 		return String(client.name).trim();
-	return fallbackToMac ? String(mac || '').slice(-8) : _('HaLow Client');
+	return fallbackToMac ? String(mac || '').slice(-8) : t('HaLow Client');
 }
 
 function showCameraToast(message, error) {
@@ -512,7 +687,7 @@ function showCameraToast(message, error) {
 	if (old) old.remove();
 	const toast = E('div', { class:`camera-toast${error ? ' camera-toast-error' : ''}`, role:'status' }, [
 		E('span', { class:'camera-toast-message' }, message),
-		E('button', { class:'camera-toast-close', title:_('Dismiss'), 'aria-label':_('Dismiss'), click:() => toast.remove() }, '×')
+		E('button', { class:'camera-toast-close', title:t('Dismiss'), 'aria-label':t('Dismiss'), click:() => toast.remove() }, '×')
 	]);
 	document.body.appendChild(toast);
 	window.setTimeout(() => toast.remove(), error ? 4500 : 2600);
@@ -529,13 +704,13 @@ function renderRemoteClientLEDSwitch(mac, online) {
 			try {
 				await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, 'on']);
 				uci.set('camera_network', section, 'remote_paired', '1'); await uci.save(); await uci.apply(10);
-				showCameraToast(_('Client paired — refreshing'));
-			} catch (error) { showCameraToast(_('Pairing failed — authorize this AP on the Client'), true); }
+				showCameraToast(t('Client paired — refreshing'));
+			} catch (error) { showCameraToast(t('Pairing failed — authorize this AP on the Client'), true); }
 			finally { control.disabled=!ip; }
-		} }, _('Pair'));
+		} }, t('Pair'));
 		if (!ip) pair.disabled=true;
 		return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
-			E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, _('Pair required'))]), pair
+			E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, t('Client lights')), E('small', {}, t('Pair required'))]), pair
 		]);
 	}
 	const button = E('button', {
@@ -551,22 +726,22 @@ function renderRemoteClientLEDSwitch(mac, online) {
 				await uci.save();
 				control.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 				control.setAttribute('aria-pressed', next ? 'true' : 'false');
-				control.querySelector('.camera-led-switch-label').textContent = next ? _('On') : _('Off');
-				showCameraToast(next ? _('Client lights enabled') : _('Client lights disabled'));
+				control.querySelector('.camera-led-switch-label').textContent = next ? t('On') : t('Off');
+				showCameraToast(next ? t('Client lights enabled') : t('Client lights disabled'));
 			} catch (error) {
-				showCameraToast(_('Client control failed — check pairing and connection'), true);
+				showCameraToast(t('Client control failed — check pairing and connection'), true);
 			} finally {
 				control.disabled = !ip;
 			}
 		}
 	}, [
 		E('span', { class:'camera-led-switch-track' }, E('span', { class:'camera-led-switch-knob' })),
-		E('span', { class:'camera-led-switch-label' }, enabled ? _('On') : _('Off'))
+		E('span', { class:'camera-led-switch-label' }, enabled ? t('On') : t('Off'))
 	]);
 	if (!ip)
 		button.disabled = true;
 	return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
-		E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, ip || _('Management IP unavailable'))]),
+		E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, t('Client lights')), E('small', {}, ip || t('Management IP unavailable'))]),
 		button
 	]);
 }
@@ -578,7 +753,7 @@ async function bindCameraToClient(clientMac, cameraMac) {
 	uci.set('camera_network', section, 'bound_camera_mac', cameraMac || '');
 	await uci.save();
 	await uci.apply(10);
-	showCameraToast(cameraProfile(mac).pinned ? _('Camera pinned') : _('Camera unpinned'));
+	showCameraToast(cameraProfile(mac).pinned ? t('Camera pinned') : t('Camera unpinned'));
 }
 
 function parseBridgeFDB(text) {
@@ -598,20 +773,20 @@ function discoveredDevices(leases, hints, selfIPs, bridgePorts) {
 		const ip = lease.ipaddr || hints.getIPAddrByMACAddr(mac);
 		if (!mac || selfIPs.has(ip)) continue;
 		seen.add(mac);
-		devices.push({ mac, ip, fallbackName: lease.hostname || hints.getHostnameByMACAddr(mac), source: _('DHCP lease'), online:true });
+		devices.push({ mac, ip, fallbackName: lease.hostname || hints.getHostnameByMACAddr(mac), source: t('DHCP lease'), online:true });
 	}
 	for (const [macRaw, hint] of Object.entries(hints.hosts || {})) {
 		const mac = macRaw.toUpperCase();
 		const ip = (hint.ipaddrs || hint.ipv4 || [])[0];
 		if (seen.has(mac) || !ip || selfIPs.has(ip)) continue;
 		seen.add(mac);
-		devices.push({ mac, ip, fallbackName: hint.name, source: _('Network neighbor'), online:true });
+		devices.push({ mac, ip, fallbackName: hint.name, source: t('Network neighbor'), online:true });
 	}
 	for (const section of uci.sections('camera_network', 'camera') || []) {
 		const mac = String(section.mac || '').toUpperCase();
 		const ip = section.last_ip || '';
 		if (!mac || !ip || seen.has(mac) || selfIPs.has(ip)) continue;
-		devices.push({ mac, ip, fallbackName: section.name, source: _('Saved static device'), online:bridgePorts ? bridgePorts.has(mac) : false });
+		devices.push({ mac, ip, fallbackName: section.name, source: t('Saved static device'), online:bridgePorts ? bridgePorts.has(mac) : false });
 	}
 	return devices;
 }
@@ -630,10 +805,10 @@ async function toggleCameraPin(mac, ip) {
 
 async function editCameraProfile(mac, ip, fallbackName) {
 	const current = cameraProfile(mac);
-	const name = window.prompt(_('Camera name'), current.name || fallbackName || '');
+	const name = window.prompt(t('Camera name'), current.name || fallbackName || '');
 	if (name === null)
 		return;
-	const note = window.prompt(_('Note / position'), current.note || '');
+	const note = window.prompt(t('Note / position'), current.note || '');
 	if (note === null)
 		return;
 	const section = cameraSection(mac);
@@ -645,7 +820,7 @@ async function editCameraProfile(mac, ip, fallbackName) {
 	uci.set('camera_network', section, 'last_ip', ip);
 	await uci.save();
 	await uci.apply(10);
-	showCameraToast(_('Camera profile saved'));
+	showCameraToast(t('Camera profile saved'));
 }
 
 async function hideCameraDevice(mac, ip) {
@@ -656,7 +831,7 @@ async function hideCameraDevice(mac, ip) {
 	uci.set('camera_network', section, 'hidden', '1');
 	await uci.save();
 	await uci.apply(10);
-	showCameraToast(_('Device hidden'));
+	showCameraToast(t('Device hidden'));
 }
 
 function valueOrDash(value) {
@@ -674,19 +849,19 @@ function signalQuality(signal, noise) {
 function signalMetrics(signal, noise) {
 	const dbm = signal === null || signal === undefined || signal === '' ? NaN : Number(signal);
 	const percent = Number.isFinite(dbm) ? Math.max(0, Math.min(100, Math.round((dbm + 100) * 2))) : 0;
-	let label = _('No signal');
+	let label = t('No signal');
 	let color = '#777';
 	if (percent >= 75) {
-		label = _('Excellent');
+		label = t('Excellent');
 		color = '#179447';
 	} else if (percent >= 50) {
-		label = _('Good');
+		label = t('Good');
 		color = '#65a30d';
 	} else if (percent >= 25) {
-		label = _('Weak');
+		label = t('Weak');
 		color = '#e89a16';
 	} else if (percent > 0) {
-		label = _('Very weak');
+		label = t('Very weak');
 		color = '#d33b32';
 	}
 	return { dbm, noise: Number(noise), percent, label, color };
@@ -707,7 +882,7 @@ function renderSignalGauge(peer) {
 		),
 		E('div', { style: 'display:flex;justify-content:space-between;gap:1rem;opacity:.82' }, [
 			E('span', {}, peer && Number.isFinite(m.noise) ? `SNR ${m.dbm - m.noise} dB` : 'SNR —'),
-			E('span', {}, peer && Number.isFinite(m.noise) ? `${_('Noise')} ${m.noise} dBm` : `${_('Noise')} —`)
+			E('span', {}, peer && Number.isFinite(m.noise) ? `${t('Noise')} ${m.noise} dBm` : `${t('Noise')} —`)
 		])
 	]);
 }
@@ -715,13 +890,13 @@ function renderSignalGauge(peer) {
 function renderHalowClients(peers, clientTemperatures) {
 	if (!peers.length)
 		return E('div', { class: 'cbi-section camera-device-section' }, [
-			E('h3', {}, _('HaLow clients')),
-			E('p', {}, E('em', {}, _('Waiting for clients to connect…')))
+			E('h3', {}, t('HaLow clients')),
+			E('p', {}, E('em', {}, t('Waiting for clients to connect…')))
 		]);
 	return E('div', { class: 'cbi-section camera-device-section' }, [
 		E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem' }, [
-			E('h3', {}, _('HaLow clients')),
-			E('strong', {}, _('%d connected').format(peers.filter(peer => peer._online !== false).length))
+			E('h3', {}, t('HaLow clients')),
+			E('strong', {}, t('%d connected').format(peers.filter(peer => peer._online !== false).length))
 		]),
 		E('div', { class: 'camera-client-grid' }, peers.map(peer => {
 			const mac = String(peer.mac || peer.bssid || '—').toUpperCase();
@@ -741,7 +916,7 @@ function renderHalowClients(peers, clientTemperatures) {
 						E('div', { class: 'camera-client-mac' }, mac)
 					]),
 					E('div', { class:'camera-client-card-status' }, [
-						E('span', { class:`camera-client-temperature${temperatureClass}`, title:_('Remote HaLow chip temperature') }, hasTemperature ? `${temperature}°C` : 'Temp —'),
+						E('span', { class:`camera-client-temperature${temperatureClass}`, title:t('Remote HaLow chip temperature') }, hasTemperature ? `${temperature}°C` : 'Temp —'),
 						statusBadge(online)
 					])
 				]),
@@ -757,9 +932,9 @@ function renderHalowClients(peers, clientTemperatures) {
 					E('span', {}, Number.isFinite(metrics.noise) ? `SNR ${metrics.dbm - metrics.noise} dB` : 'SNR —')
 				]),
 				E('div', { style: 'display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;border-top:1px solid var(--camera-border);padding-top:.7rem;font-size:.78rem' }, [
-					E('div', {}, [E('small', {}, online ? _('Online') : _('Last session')), E('strong', { style:'display:block' }, formatDuration(peer.connected_time || 0))]),
-					E('div', {}, [E('small', {}, _('Dropouts')), E('strong', { style:'display:block' }, String(outages.length))]),
-					E('div', {}, [E('small', {}, _('Last recovery')), E('strong', { style:'display:block' }, latestRecovery === null ? '—' : formatDuration(latestRecovery / 1000))])
+					E('div', {}, [E('small', {}, online ? t('Online') : t('Last session')), E('strong', { style:'display:block' }, formatDuration(peer.connected_time || 0))]),
+					E('div', {}, [E('small', {}, t('Dropouts')), E('strong', { style:'display:block' }, String(outages.length))]),
+					E('div', {}, [E('small', {}, t('Last recovery')), E('strong', { style:'display:block' }, latestRecovery === null ? '—' : formatDuration(latestRecovery / 1000))])
 				]),
 				renderRemoteClientLEDSwitch(mac, online)
 			]);
@@ -777,20 +952,20 @@ function renderRemoteTemperatureAlert(clientTemperatures) {
 			continue;
 		const name = clientDisplayName(mac, true);
 		if (temperature >= 85) critical = true;
-		warnings.push(`${name}: ${Number.isFinite(temperature) ? `${temperature}°C` : _('temperature unavailable')}${mitigation > 0 ? ` · ${_('thermal protection')} ${mitigation}` : ''}`);
+		warnings.push(`${name}: ${Number.isFinite(temperature) ? `${temperature}°C` : t('temperature unavailable')}${mitigation > 0 ? ` · ${t('thermal protection')} ${mitigation}` : ''}`);
 	}
 	if (!warnings.length) {
 		dismissedAlerts.delete('remote-temperature-high');
 		return E([]);
 	}
-	return dismissibleAlert('remote-temperature-high', critical ? 'camera-alert-danger' : 'camera-alert-warning', `▲ ${_('Client temperature alert')} · ${warnings.join(' · ')}`);
+	return dismissibleAlert('remote-temperature-high', critical ? 'camera-alert-danger' : 'camera-alert-warning', `▲ ${t('Client temperature alert')} · ${warnings.join(' · ')}`);
 }
 
 function dismissibleAlert(key, className, message) {
 	if (dismissedAlerts.has(key)) return E([]);
 	const alert = E('div', { class:`camera-alert ${className}` }, [
 		E('span', { class:'camera-alert-message' }, message),
-		E('button', { class:'camera-alert-close', title:_('Dismiss'), 'aria-label':_('Dismiss'), click:() => { dismissedAlerts.add(key); alert.remove(); } }, '×')
+		E('button', { class:'camera-alert-close', title:t('Dismiss'), 'aria-label':t('Dismiss'), click:() => { dismissedAlerts.add(key); alert.remove(); } }, '×')
 	]);
 	return alert;
 }
@@ -808,11 +983,11 @@ function renderTemperatureAlert(temperature, thermalMitigation) {
 	if (Number.isFinite(value))
 		details.push(`${value}°C`);
 	if (mitigation > 0)
-		details.push(`${_('thermal mitigation events')}: ${mitigation}`);
+		details.push(`${t('thermal mitigation events')}: ${mitigation}`);
 	return dismissibleAlert(
 		'temperature-high',
 		critical || emergency ? 'camera-alert-danger' : 'camera-alert-warning',
-		`${critical ? '●' : '▲'} ${emergency ? _('Emergency chip temperature') : critical ? _('Critical chip temperature') : _('High chip temperature')}: ${details.join(' · ')}`
+		`${critical ? '●' : '▲'} ${emergency ? t('Emergency chip temperature') : critical ? t('Critical chip temperature') : t('High chip temperature')}: ${details.join(' · ')}`
 	);
 }
 
@@ -823,21 +998,21 @@ function renderTemperaturePanel(temperature, thermalMitigation) {
 	const warm = available && value >= 75 && value < 85;
 	const hot = available && value >= 85;
 	const emergency = available && value >= 95;
-	const status = !available ? _('Waiting for sensor…')
-		: emergency ? _('Emergency — reduce load immediately')
-		: hot ? _('Critical temperature')
-		: warm ? _('Elevated temperature')
-		: _('Temperature normal');
+	const status = !available ? t('Waiting for sensor…')
+		: emergency ? t('Emergency — reduce load immediately')
+		: hot ? t('Critical temperature')
+		: warm ? t('Elevated temperature')
+		: t('Temperature normal');
 	return E('div', { class:'cbi-section camera-temperature-panel' }, [
 		E('div', {}, [
-			E('strong', {}, _('HaLow chip temperature')),
+			E('strong', {}, t('HaLow chip temperature')),
 			E('small', { style:'display:block;margin-top:.2rem' }, status)
 		]),
 		E('div', {}, [
 			E('div', { class:`camera-temperature-value${hot ? ' hot' : warm ? ' warm' : ''}` }, available ? `${value}°C` : '—'),
 			E('div', { class:'camera-temperature-meta' }, mitigation > 0
-				? `${_('Thermal protection')}: ${mitigation}`
-				: _('Warning 75°C · Critical 85°C'))
+				? `${t('Thermal protection')}: ${mitigation}`
+				: t('Warning 75°C · Critical 85°C'))
 		])
 	]);
 }
@@ -846,10 +1021,10 @@ function renderAPSummary(state) {
 	const healthy = state.halow.peers.length && state.halow.peers.every(peer => Number(peer.signal) >= -75);
 	return E('div', { class:'cbi-section camera-ap-summary' }, [
 		E('div', { class:'camera-ap-summary-main' }, [
-			E('h3', { style:'margin:0' }, _('HaLow access point')),
-			E('div', { class:'camera-ap-health', style:`color:${healthy ? '#16a078' : '#f59e0b'}` }, healthy ? _('Healthy') : _('Attention'))
+			E('h3', { style:'margin:0' }, t('HaLow access point')),
+			E('div', { class:'camera-ap-health', style:`color:${healthy ? '#16a078' : '#f59e0b'}` }, healthy ? t('Healthy') : t('Attention'))
 		]),
-		E('div', { class:'camera-ap-meta' }, `${state.halow.peers.length === 1 ? _('1 client') : _('%d clients').format(state.halow.peers.length)} · ${uci.get('wireless', 'default_radio1', 'ssid') || '—'} · ${_('Channel')} ${uci.get('wireless', 'radio1', 'channel') || '—'}`)
+		E('div', { class:'camera-ap-meta' }, `${state.halow.peers.length === 1 ? t('1 client') : t('%d clients').format(state.halow.peers.length)} · ${uci.get('wireless', 'default_radio1', 'ssid') || '—'} · ${t('Channel')} ${uci.get('wireless', 'radio1', 'channel') || '—'}`)
 	]);
 }
 
@@ -862,14 +1037,14 @@ function renderAPAlerts(peers) {
 		const snr = Number.isFinite(signal) && Number.isFinite(noise) ? signal - noise : null;
 		const outages = apOutages.get(mac) || [];
 		const latest = outages.length ? outages[outages.length - 1] : null;
-		if (signal < -75) alerts.push(`${name}: ${_('weak signal')} ${signal} dBm`);
-		else if (snr !== null && snr < 15) alerts.push(`${name}: ${_('low SNR')} ${snr} dB`);
-		if (outages.length >= 3) alerts.push(`${name}: ${_('frequent dropouts')} (${outages.length})`);
-		if (latest && latest.duration > 15000) alerts.push(`${name}: ${_('slow recovery')} ${Math.round(latest.duration / 1000)}s`);
+		if (signal < -75) alerts.push(`${name}: ${t('weak signal')} ${signal} dBm`);
+		else if (snr !== null && snr < 15) alerts.push(`${name}: ${t('low SNR')} ${snr} dB`);
+		if (outages.length >= 3) alerts.push(`${name}: ${t('frequent dropouts')} (${outages.length})`);
+		if (latest && latest.duration > 15000) alerts.push(`${name}: ${t('slow recovery')} ${Math.round(latest.duration / 1000)}s`);
 	}
 	for (const [mac, state] of apClientStates.entries()) {
 		if (!state.connected) {
-			alerts.push(`${clientDisplayName(mac, true)}: ${_('disconnected')}`);
+			alerts.push(`${clientDisplayName(mac, true)}: ${t('disconnected')}`);
 		}
 	}
 	if (!alerts.length) { dismissedAlerts.delete('ap-network'); return E([]); }
@@ -882,28 +1057,28 @@ function renderReadiness(peers, devices) {
 	const visible = new Set(devices.filter(device => device.online).map(device => device.mac));
 	const missing = saved.filter(section => section.mac && !visible.has(String(section.mac).toUpperCase()));
 	const ready = peers.length > 0 && saved.length > 0 && missing.length === 0;
-	const clientText = peers.length === 1 ? _('1 HaLow client') : _('%d HaLow clients').format(peers.length);
-	const cameraText = saved.length === 1 ? _('1 camera') : _('%d cameras').format(saved.length);
-	let detail = ready ? _('%s and %s online').format(clientText, cameraText)
-		: !peers.length ? _('No HaLow client connected')
-		: !saved.length ? _('Pin at least one camera below')
-		: missing.length === 1 ? _('1 pinned camera offline') : _('%d pinned cameras offline').format(missing.length);
+	const clientText = peers.length === 1 ? t('1 HaLow client') : t('%d HaLow clients').format(peers.length);
+	const cameraText = saved.length === 1 ? t('1 camera') : t('%d cameras').format(saved.length);
+	let detail = ready ? t('%s and %s online').format(clientText, cameraText)
+		: !peers.length ? t('No HaLow client connected')
+		: !saved.length ? t('Pin at least one camera below')
+		: missing.length === 1 ? t('1 pinned camera offline') : t('%d pinned cameras offline').format(missing.length);
 	return E('div', { class:`camera-ready-banner ${ready ? 'camera-ready-yes' : 'camera-ready-no'}` }, [
 		E('div', {}, [E('div', { class:'camera-ready-word', style:`color:${ready ? '#34d399' : '#fbbf24'}` }, ready ? 'READY' : 'NOT READY'), E('small', {}, detail)]),
-		E('strong', {}, ready ? _('Ready to shoot') : _('Check network'))
+		E('strong', {}, ready ? t('Ready to shoot') : t('Check network'))
 	]);
 }
 
 function renderBootRecovery(boot) {
-	const value = seconds => Number.isFinite(Number(seconds)) ? formatDuration(Number(seconds)) : _('Waiting…');
+	const value = seconds => Number.isFinite(Number(seconds)) ? formatDuration(Number(seconds)) : t('Waiting…');
 	return E('div', { class:'cbi-section camera-device-section' }, [
-		E('h3', {}, _('Power-on recovery — this boot')),
+		E('h3', {}, t('Power-on recovery — this boot')),
 		E('div', { class:'camera-boot-grid' }, [
-			E('div', { class:'camera-boot-step' }, [E('small', {}, _('AP monitor ready')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.ap))]),
-			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First HaLow client')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.client))]),
-			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First pinned camera')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.camera))])
+			E('div', { class:'camera-boot-step' }, [E('small', {}, t('AP monitor ready')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.ap))]),
+			E('div', { class:'camera-boot-step' }, [E('small', {}, t('First HaLow client')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.client))]),
+			E('div', { class:'camera-boot-step' }, [E('small', {}, t('First pinned camera')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.camera))])
 		]),
-		E('small', { style:'display:block;opacity:.65;margin-top:.55rem' }, _('Measured continuously by the AP, even when this page is closed.'))
+		E('small', { style:'display:block;opacity:.65;margin-top:.55rem' }, t('Measured continuously by the AP, even when this page is closed.'))
 	]);
 }
 
@@ -912,8 +1087,8 @@ function renderCameraAssignments(peers, devices, bridgePorts) {
 	const pinned = devices.filter(device => cameraProfile(device.mac).pinned && !clientMacs.has(device.mac));
 	return E('div', { class:'cbi-section camera-device-section camera-config-only' }, [
 		E('div', { class:'camera-section-heading' }, [
-			E('h3', {}, _('Client → camera connections')),
-			E('small', { style:'display:block;opacity:.7;margin-top:.35rem' }, _('Pinned cameras on the same HaLow bridge port are matched automatically.'))
+			E('h3', {}, t('Client → camera connections')),
+			E('small', { style:'display:block;opacity:.7;margin-top:.35rem' }, t('Pinned cameras on the same HaLow bridge port are matched automatically.'))
 		]),
 		...(peers || []).map(peer => {
 			const clientMac = String(peer.mac || peer.bssid || '').toUpperCase();
@@ -923,7 +1098,7 @@ function renderCameraAssignments(peers, devices, bridgePorts) {
 			const chosenMac = clientProfile.boundCameraMac || (automatic.length === 1 ? automatic[0].mac : '');
 			const chosen = devices.find(device => device.mac === chosenMac);
 			const select = E('select', { class:'cbi-input-select', value:chosenMac, change:ev => bindCameraToClient(clientMac, ev.currentTarget.value) }, [
-				E('option', { value:'' }, automatic.length > 1 ? _('Choose camera') : _('No camera detected')),
+				E('option', { value:'' }, automatic.length > 1 ? t('Choose camera') : t('No camera detected')),
 				...pinned.filter(device => device.mac !== clientMac).map(device => {
 					const profile = cameraProfile(device.mac);
 					const attrs = { value:device.mac };
@@ -936,11 +1111,11 @@ function renderCameraAssignments(peers, devices, bridgePorts) {
 			if (chosenMac)
 				select.value = chosenMac;
 			return E('div', { class:'camera-assignment-row' }, [
-				E('div', {}, [E('strong', {}, clientProfile.name || _('HaLow Client')), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
+				E('div', {}, [E('strong', {}, clientProfile.name || t('HaLow Client')), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
 				E('div', {}, [
-					chosen ? E('div', { style:'font-weight:750;margin-bottom:.35rem' }, `→ ${cameraProfile(chosen.mac).name || chosen.fallbackName || _('Camera')} · ${chosen.ip || '—'}`) : '',
+					chosen ? E('div', { style:'font-weight:750;margin-bottom:.35rem' }, `→ ${cameraProfile(chosen.mac).name || chosen.fallbackName || t('Camera')} · ${chosen.ip || '—'}`) : '',
 					select,
-					E('small', { style:'display:block;opacity:.65;margin-top:.3rem' }, clientProfile.boundCameraMac ? _('Manual selection') : automatic.length === 1 ? _('Automatically detected') : _('Pin the camera below, then select it here.'))
+					E('small', { style:'display:block;opacity:.65;margin-top:.3rem' }, clientProfile.boundCameraMac ? t('Manual selection') : automatic.length === 1 ? t('Automatically detected') : t('Pin the camera below, then select it here.'))
 				])
 			]);
 		})
@@ -960,7 +1135,7 @@ function exportCameraConfiguration(state) {
 	const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
 	const link = E('a', { href:url, download:`halow-camera-config-${new Date().toISOString().slice(0,10)}.json` });
 	document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-	showCameraToast(_('Configuration exported'));
+	showCameraToast(t('Configuration exported'));
 }
 
 function importCameraConfiguration() {
@@ -973,7 +1148,7 @@ function importCameraConfiguration() {
 			try {
 				const payload = JSON.parse(String(reader.result || '{}'));
 				if (!Array.isArray(payload.cameras)) throw new Error('invalid');
-				if (!window.confirm(_('Merge %d saved device profiles into this controller?').format(payload.cameras.length))) return;
+				if (!window.confirm(t('Merge %d saved device profiles into this controller?').format(payload.cameras.length))) return;
 				for (const camera of payload.cameras) {
 					if (!camera.mac) continue;
 					const section = cameraSection(camera.mac);
@@ -988,9 +1163,9 @@ function importCameraConfiguration() {
 					uci.set('camera_network', section, 'remote_leds_enabled', camera.remoteLEDS === false ? '0' : '1');
 				}
 				await uci.save(); await uci.apply(10);
-				showCameraToast(_('Configuration restored — refreshing'));
+				showCameraToast(t('Configuration restored — refreshing'));
 				window.setTimeout(() => window.location.reload(), 700);
-			} catch (error) { showCameraToast(_('Invalid configuration file'), true); }
+			} catch (error) { showCameraToast(t('Invalid configuration file'), true); }
 		};
 		reader.readAsText(file);
 	});
@@ -1177,14 +1352,14 @@ function renderAPSignalHistory() {
 	const colors = ['#16a078', '#3b82f6', '#f59e0b', '#e879f9', '#ef4444', '#84cc16'];
 	return E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
 		E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
-			E('h3', {}, _('Client signal history — last 5 minutes')),
+			E('h3', {}, t('Client signal history — last 5 minutes')),
 			E('div', { style: 'display:flex;gap:.8rem;flex-wrap:wrap;font-size:.82rem;font-weight:700' }, entries.map((entry, index) => {
 				const profile = cameraProfile(entry[0]);
 				return E('span', { style: `color:${colors[index % colors.length]}` }, `● ${profile.name || entry[0].slice(-8)}`);
 			}))
 		]),
-		ready ? canvas : E('p', {}, E('em', {}, _('Collecting samples… the curve appears after two refreshes.'))),
-		E('small', { class:'camera-chart-note', style: 'display:block;opacity:.7;margin-top:.5rem' }, _('Shaded gaps mark signal loss. The number shows how long reconnection took.'))
+		ready ? canvas : E('p', {}, E('em', {}, t('Collecting samples… the curve appears after two refreshes.'))),
+		E('small', { class:'camera-chart-note', style: 'display:block;opacity:.7;margin-top:.5rem' }, t('Shaded gaps mark signal loss. The number shows how long reconnection took.'))
 	]);
 }
 
@@ -1245,14 +1420,14 @@ function renderSignalHistory() {
 		window.requestAnimationFrame(() => drawChart(canvas));
 	return E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
 		E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
-			E('h3', {}, _('Signal history — last 5 minutes')),
+			E('h3', {}, t('Signal history — last 5 minutes')),
 			E('div', { style: 'display:flex;gap:1rem;font-size:.9rem;font-weight:700' }, [
 				E('span', { style: 'color:#0f766e' }, '● Signal dBm'),
 				E('span', { style: 'color:#2563eb' }, '● SNR dB')
 			])
 		]),
 		signalSamples.length < 2
-			? E('p', {}, E('em', {}, _('Collecting samples…')))
+			? E('p', {}, E('em', {}, t('Collecting samples…')))
 			: canvas
 	]);
 }
@@ -1260,7 +1435,7 @@ function renderSignalHistory() {
 function renderLinkAlert(peer) {
 	if (!peer) {
 		dismissedAlerts.delete('client-weak'); dismissedAlerts.delete('client-snr');
-		return dismissibleAlert('client-disconnected', 'camera-alert-danger', `● ${_('HaLow link is disconnected')}`);
+		return dismissibleAlert('client-disconnected', 'camera-alert-danger', `● ${t('HaLow link is disconnected')}`);
 	}
 	dismissedAlerts.delete('client-disconnected');
 	const signal = Number(peer.signal);
@@ -1268,11 +1443,11 @@ function renderLinkAlert(peer) {
 	const snr = Number.isFinite(signal) && Number.isFinite(noise) ? signal - noise : null;
 	if (signal < -75) {
 		dismissedAlerts.delete('client-snr');
-		return dismissibleAlert('client-weak', 'camera-alert-warning', `▲ ${_('Weak HaLow signal: %d dBm').format(signal)}`);
+		return dismissibleAlert('client-weak', 'camera-alert-warning', `▲ ${t('Weak HaLow signal: %d dBm').format(signal)}`);
 	}
 	dismissedAlerts.delete('client-weak');
 	if (snr !== null && snr < 15)
-		return dismissibleAlert('client-snr', 'camera-alert-warning', `▲ ${_('Low signal-to-noise ratio: %d dB').format(snr)}`);
+		return dismissibleAlert('client-snr', 'camera-alert-warning', `▲ ${t('Low signal-to-noise ratio: %d dB').format(snr)}`);
 	dismissedAlerts.delete('client-snr');
 	return null;
 }
@@ -1286,11 +1461,11 @@ function renderDeviceAlert(leases, hints) {
 	const missing = (uci.sections('camera_network', 'camera') || [])
 		.filter(section => section.pinned === '1' && section.mac && !visible.has(String(section.mac).toUpperCase()));
 	if (missing.length)
-		return dismissibleAlert('saved-offline', 'camera-alert-danger', `● ${missing.length === 1 ? _('1 saved camera is offline') : _('%d saved cameras are offline').format(missing.length)}`);
+		return dismissibleAlert('saved-offline', 'camera-alert-danger', `● ${missing.length === 1 ? t('1 saved camera is offline') : t('%d saved cameras are offline').format(missing.length)}`);
 	dismissedAlerts.delete('saved-offline');
-	const failed = Array.from(latencyResults.values()).filter(result => result.text === _('No reply')).length;
+	const failed = Array.from(latencyResults.values()).filter(result => result.text === t('No reply')).length;
 	if (failed)
-		return dismissibleAlert('latency-failed', 'camera-alert-warning', `▲ ${_('%d device(s) did not reply to the latency test').format(failed)}`);
+		return dismissibleAlert('latency-failed', 'camera-alert-warning', `▲ ${t('%d device(s) did not reply to the latency test').format(failed)}`);
 	dismissedAlerts.delete('latency-failed');
 	return null;
 }
@@ -1298,8 +1473,8 @@ function renderDeviceAlert(leases, hints) {
 function formatDuration(seconds) {
 	const value = Math.max(0, Math.round(Number(seconds) || 0));
 	if (value < 60)
-		return _('%d seconds').format(value);
-	return _('%d min %d sec').format(Math.floor(value / 60), value % 60);
+		return t('%d seconds').format(value);
+	return t('%d min %d sec').format(Math.floor(value / 60), value % 60);
 }
 
 function parseLinkHistory(text) {
@@ -1310,16 +1485,16 @@ function parseLinkHistory(text) {
 		let detail = null;
 		if (/CTRL-EVENT-CONNECTED/.test(line)) {
 			type = 'connected';
-			detail = _('HaLow link connected');
+			detail = t('HaLow link connected');
 		} else if (/CTRL-EVENT-DISCONNECTED|wlan0.*link is down/i.test(line)) {
 			type = 'disconnected';
-			detail = _('HaLow link disconnected');
+			detail = t('HaLow link disconnected');
 		} else if (/Trying to authenticate/.test(line)) {
 			type = 'auth';
-			detail = _('Authentication started');
+			detail = t('Authentication started');
 		} else if (/Successfully initialized wpa_supplicant/.test(line)) {
 			type = 'init';
-			detail = _('HaLow client initialized');
+			detail = t('HaLow client initialized');
 		}
 		const kernelMatch = line.match(/\[\s*([0-9.]+)\]\s+wlan0:\s+associated/i);
 		if (kernelMatch)
@@ -1334,7 +1509,7 @@ function parseLinkHistory(text) {
 
 function renderLinkHistory(history) {
 	if (!history.events.length)
-		return E('p', {}, E('em', {}, _('No connection events recorded in this boot.')));
+		return E('p', {}, E('em', {}, t('No connection events recorded in this boot.')));
 	return E('div', { style: 'display:grid;gap:.55rem' }, history.events.map(event => {
 		const color = event.type === 'connected' ? '#179447' : event.type === 'disconnected' ? '#d33b32' : '#2563a8';
 		return E('div', { style: 'display:grid;grid-template-columns:12px minmax(160px,1fr) auto;align-items:center;gap:.65rem' }, [
@@ -1348,26 +1523,26 @@ function renderLinkHistory(history) {
 function statusBadge(online) {
 	return E('span', {
 		style: `display:inline-block;padding:.2rem .65rem;border-radius:999px;font-weight:700;color:${online ? '#126b36' : '#777'};background:${online ? '#dff7e8' : '#eee'}`
-	}, online ? _('Online') : _('Offline'));
+	}, online ? t('Online') : t('Offline'));
 }
 
 async function testLatency(ip, output, button) {
 	button.disabled = true;
 	button.classList.add('spinning');
-	output.textContent = _('Testing…');
+	output.textContent = t('Testing…');
 	try {
 		const text = await fs.exec_direct('/bin/ping', ['-c', '1', '-W', '1', ip]);
 		const replied = typeof text === 'string' && /(?:bytes from|1 packets received|1 received)/i.test(text);
 		if (!replied)
 			throw new Error('No ICMP reply');
 		const match = text.match(/time[=<]([0-9.]+)\s*ms/i);
-		const result = match ? `${match[1]} ms` : _('Reachable');
+		const result = match ? `${match[1]} ms` : t('Reachable');
 		latencyResults.set(ip, { text: result, color: '#179447' });
 		output.textContent = result;
 		output.style.color = '#179447';
 	} catch (e) {
-		latencyResults.set(ip, { text: _('No reply'), color: '#d33b32' });
-		output.textContent = _('No reply');
+		latencyResults.set(ip, { text: t('No reply'), color: '#d33b32' });
+		output.textContent = t('No reply');
 		output.style.color = '#d33b32';
 	} finally {
 		button.disabled = false;
@@ -1381,7 +1556,7 @@ function latencyControl(ip) {
 	const button = E('button', {
 		class: 'cbi-button cbi-button-action cbi-button-inline',
 		click: (ev) => testLatency(ip, output, ev.currentTarget)
-	}, _('Test'));
+	}, t('Test'));
 	return E('div', { style: 'display:flex;align-items:center;gap:.5rem;white-space:nowrap' }, [output, button]);
 }
 
@@ -1398,11 +1573,11 @@ function deviceDetails(mac, source) {
 	if (openDeviceDetails.has(mac))
 		attrs.open = '';
 	return E('details', attrs, [
-		E('summary', {}, _('Details')),
+		E('summary', {}, t('Details')),
 		E('dl', {}, [
-			E('dt', {}, _('MAC address')),
+			E('dt', {}, t('MAC address')),
 			E('dd', {}, valueOrDash(mac)),
-			E('dt', {}, _('Source')),
+			E('dt', {}, t('Source')),
 			E('dd', {}, source)
 		])
 	]);
@@ -1421,12 +1596,12 @@ function renderDeviceTable(leases, hints, selfIPs, bridgePorts) {
 			.sort((a, b) => Number(b.profile.pinned) - Number(a.profile.pinned));
 		const cards = visible.map(device => {
 			const tested = latencyResults.get(device.ip);
-			const effectiveOnline = tested ? tested.text !== _('No reply') : device.online;
+			const effectiveOnline = tested ? tested.text !== t('No reply') : device.online;
 			return E('div', { class:'cbi-section camera-device-card' }, [
 			E('div', { class:'camera-device-card-head' }, [
 				E('button', {
 				class: `cbi-button camera-pin${device.profile.pinned ? ' camera-pin-active' : ''}`,
-				title: device.profile.pinned ? _('Unpin camera') : _('Pin camera'),
+				title: device.profile.pinned ? t('Unpin camera') : t('Pin camera'),
 				click: async () => { await toggleCameraPin(device.mac, device.ip); updateFilterButtons(); renderRows(); }
 				}, device.profile.pinned ? '★' : '☆'),
 				E('a', { class:'camera-device-card-name', href:`http://${device.ip}/`, target:'_blank', rel:'noopener' }, valueOrDash(device.profile.name || device.fallbackName)),
@@ -1437,18 +1612,18 @@ function renderDeviceTable(leases, hints, selfIPs, bridgePorts) {
 			E('div', { class:'camera-device-card-actions' }, [
 				latencyControl(device.ip),
 				deviceDetails(device.mac, device.source),
-				E('button', { class:'cbi-button cbi-button-edit', click:() => editCameraProfile(device.mac, device.ip, device.fallbackName) }, _('Edit')),
+				E('button', { class:'cbi-button cbi-button-edit', click:() => editCameraProfile(device.mac, device.ip, device.fallbackName) }, t('Edit')),
 				deviceView.filter === 'hidden'
-					? E('button', { class:'cbi-button', click:async() => { const section=cameraSection(device.mac); uci.set('camera_network', section, 'hidden', '0'); await uci.save(); await uci.apply(10); showCameraToast(_('Device restored')); updateFilterButtons(); renderRows(); } }, _('Restore'))
-					: E('button', { class:'cbi-button', click:async() => { await hideCameraDevice(device.mac, device.ip); updateFilterButtons(); renderRows(); } }, _('Hide'))
+					? E('button', { class:'cbi-button', click:async() => { const section=cameraSection(device.mac); uci.set('camera_network', section, 'hidden', '0'); await uci.save(); await uci.apply(10); showCameraToast(t('Device restored')); updateFilterButtons(); renderRows(); } }, t('Restore'))
+					: E('button', { class:'cbi-button', click:async() => { await hideCameraDevice(device.mac, device.ip); updateFilterButtons(); renderRows(); } }, t('Hide'))
 			])
 		]);
 		});
-		tableHost.replaceChildren(...(cards.length ? cards : [E('p', {}, E('em', {}, _('No matching devices.')))]));
+		tableHost.replaceChildren(...(cards.length ? cards : [E('p', {}, E('em', {}, t('No matching devices.')))]));
 	};
 	const search = E('input', {
 		type: 'search',
-		placeholder: _('Search name, IP or MAC'),
+		placeholder: t('Search name, IP or MAC'),
 		value: deviceView.query,
 		input: (ev) => { deviceView.query = ev.currentTarget.value; renderRows(); }
 	});
@@ -1461,15 +1636,15 @@ function renderDeviceTable(leases, hints, selfIPs, bridgePorts) {
 			E('button', {
 				class: `cbi-button camera-filter-button${deviceView.filter === 'all' ? ' camera-filter-button-active' : ''}`,
 				click: () => { deviceView.filter = 'all'; updateFilterButtons(); renderRows(); }
-			}, `${_('All devices')} (${visibleCount})`),
+			}, `${t('All devices')} (${visibleCount})`),
 			E('button', {
 				class: `cbi-button camera-filter-button${deviceView.filter === 'pinned' ? ' camera-filter-button-active' : ''}`,
 				click: () => { deviceView.filter = 'pinned'; updateFilterButtons(); renderRows(); }
-			}, `${_('Pinned only')} (${pinnedCount})`),
+			}, `${t('Pinned only')} (${pinnedCount})`),
 			E('button', {
 				class:`cbi-button camera-filter-button${deviceView.filter === 'hidden' ? ' camera-filter-button-active' : ''}`,
 				click:() => { deviceView.filter='hidden'; updateFilterButtons(); renderRows(); }
-			}, `${_('Hidden')} (${hiddenCount})`)
+			}, `${t('Hidden')} (${hiddenCount})`)
 		);
 	};
 	updateFilterButtons();
@@ -1568,16 +1743,16 @@ return view.extend({
 				: E([], [
 					E('div', { class: 'camera-summary-grid' }, [
 						E('div', { class: 'cbi-section camera-summary-card' }, [
-							E('h3', {}, _('HaLow link')),
+							E('h3', {}, t('HaLow link')),
 							E('p', {}, peer ? statusBadge(true) : statusBadge(false)),
 							renderSignalGauge(peer),
-							E('p', {}, peer && peer.connected_time !== undefined ? _('Connected for %d seconds').format(peer.connected_time) : '')
+							E('p', {}, peer && peer.connected_time !== undefined ? t('Connected for %d seconds').format(peer.connected_time) : '')
 						]),
 						E('div', { class: 'cbi-section camera-summary-card' }, [
-							E('h3', {}, _('This boot')),
+							E('h3', {}, t('This boot')),
 							E('div', { class: 'camera-boot-time', style: `color:${acquisitionTime !== null && acquisitionTime <= 20 ? '#179447' : '#2563a8'}` }, acquisitionTime === null ? '—' : formatDuration(acquisitionTime)),
-							E('p', { style: 'font-weight:700' }, _('Power-on → HaLow ready')),
-							E('p', { style: 'opacity:.7;font-size:.9rem' }, _('Uptime: %s').format(formatDuration(uptime)))
+							E('p', { style: 'font-weight:700' }, t('Power-on → HaLow ready')),
+							E('p', { style: 'opacity:.7;font-size:.9rem' }, t('Uptime: %s').format(formatDuration(uptime)))
 						])
 					]),
 					renderSignalHistory()
@@ -1591,19 +1766,24 @@ return view.extend({
 			root.replaceChildren(
 				E('style', {}, dashboardStyles),
 				E('div', { class: 'camera-console-bar' }, [
-					E('button', { class: 'cbi-button camera-sidebar-toggle', title: _('Open or close sidebar'), click: toggleSidebar }, '☰'),
+					E('button', { class: 'cbi-button camera-sidebar-toggle', title: t('Open or close sidebar'), click: toggleSidebar }, '☰'),
 					E('div', { class: 'camera-console-title' }, [
 						E('div', {}, [
-							E('h2', {}, _('CAMERA NETWORK')),
-							E('div', { class: 'camera-console-subtitle' }, _('HaLow production console · Live telemetry'))
+							E('h2', {}, t('CAMERA NETWORK')),
+							E('div', { class: 'camera-console-subtitle' }, t('HaLow production console · Live telemetry'))
 						])
 					]),
 					E('div', { class: 'camera-toolbar-actions' }, [
-						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:() => exportCameraConfiguration(state) }, _('Export')) : E([]),
-						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:importCameraConfiguration }, _('Import')) : E([]),
-						isAP ? E('button', { class:'cbi-button camera-monitor-button', click:() => toggleMonitorMode(root) }, root.classList.contains('camera-monitor-mode') ? _('Exit monitor') : _('Monitor')) : E([]),
+						E('button', {
+							class:'cbi-button camera-language-button',
+							title:cameraLanguage() === 'zh' ? t('Switch to English') : t('Switch to Chinese'),
+							click:toggleCameraLanguage
+						}, cameraLanguage() === 'zh' ? 'EN' : '中文'),
+						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:() => exportCameraConfiguration(state) }, t('Export')) : E([]),
+						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:importCameraConfiguration }, t('Import')) : E([]),
+						isAP ? E('button', { class:'cbi-button camera-monitor-button', click:() => toggleMonitorMode(root) }, root.classList.contains('camera-monitor-mode') ? t('Exit monitor') : t('Monitor')) : E([]),
 						E('span', { class: 'camera-live-dot' }),
-						E('span', { class: 'camera-console-subtitle camera-live-label' }, _('Live'))
+						E('span', { class: 'camera-console-subtitle camera-live-label' }, t('Live'))
 					])
 				]),
 				isAP ? renderReadiness(state.halow.peers, devices) : E([]),
@@ -1616,16 +1796,16 @@ return view.extend({
 				isAP ? renderBootRecovery(state.boot) : E([]),
 				E('div', { class: 'cbi-section camera-device-section camera-config-only' }, [
 					E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
-						E('h3', {}, _('Discovered devices')),
-						E('small', { style: 'opacity:.7' }, `${_('Updated')} ${new Date().toLocaleTimeString()}`)
+						E('h3', {}, t('Discovered devices')),
+						E('small', { style: 'opacity:.7' }, `${t('Updated')} ${new Date().toLocaleTimeString(cameraLanguage() === 'zh' ? 'zh-CN' : 'en-US')}`)
 					]),
 					renderDeviceTable(state.leases, state.hints, state.selfIPs, state.bridgePorts)
 				]),
 				isAP ? E([]) : E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
-					E('h3', {}, _('HaLow connection history — this boot')),
+					E('h3', {}, t('HaLow connection history — this boot')),
 					renderLinkHistory(state.linkHistory)
 				]),
-				E('p', { style: 'opacity:.7' }, _('Camera network telemetry refreshes every 2 seconds.'))
+				E('p', { style: 'opacity:.7' }, t('Camera network telemetry refreshes every 2 seconds.'))
 			);
 			window.requestAnimationFrame(() => {
 				const newDeviceScroll = root.querySelector('.camera-table-scroll');
