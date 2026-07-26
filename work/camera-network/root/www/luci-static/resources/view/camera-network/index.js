@@ -236,7 +236,29 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-console-subtitle { color:#7f8792; font-size:.78rem; text-transform:uppercase; letter-spacing:.12em; }
 .camera-dashboard .camera-live-dot { width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12); }
 .camera-dashboard .camera-toolbar-actions { display:flex;align-items:center;gap:.6rem; }
-.camera-dashboard .camera-language-button { min-width:3.1rem;padding-left:.65rem;padding-right:.65rem; }
+.camera-dashboard .camera-language-button {
+	min-width:2.7rem !important;
+	min-height:2.1rem !important;
+	padding:.3rem .55rem !important;
+	font-size:.78rem !important;
+	line-height:1.1;
+	border-radius:7px;
+}
+.camera-dashboard .camera-language-footer {
+	display:flex;
+	justify-content:flex-end;
+	align-items:center;
+	margin-top:.5rem;
+}
+.camera-dashboard .camera-language-footer .camera-language-button {
+	opacity:.72;
+	background:transparent !important;
+	color:var(--camera-slate) !important;
+	border:1px solid var(--camera-border) !important;
+}
+.camera-dashboard .camera-language-footer .camera-language-button:hover {
+	opacity:1;
+}
 .camera-dashboard .camera-sidebar-toggle { background:#242932 !important;border:1px solid #3a414c !important; }
 .camera-dashboard.camera-monitor-mode .camera-config-only { display:none !important; }
 .camera-dashboard .camera-ready-banner { display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem 1.2rem;margin-bottom:1rem;border-radius:10px;border:1px solid var(--camera-border); }
@@ -503,6 +525,12 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-console-title .camera-console-subtitle { display:none; }
 	.camera-dashboard .camera-toolbar-actions { gap:.4rem; }
 	.camera-dashboard .camera-toolbar-actions .cbi-button { min-width:0;padding:.5rem .7rem; }
+	.camera-dashboard .camera-toolbar-actions .camera-language-button {
+		min-width:2.5rem !important;
+		min-height:2rem !important;
+		padding:.25rem .45rem !important;
+		font-size:.74rem !important;
+	}
 }
 @media (max-width: 700px) {
 	.camera-dashboard { font-size: 16px; }
@@ -1774,11 +1802,6 @@ return view.extend({
 						])
 					]),
 					E('div', { class: 'camera-toolbar-actions' }, [
-						E('button', {
-							class:'cbi-button camera-language-button',
-							title:cameraLanguage() === 'zh' ? t('Switch to English') : t('Switch to Chinese'),
-							click:toggleCameraLanguage
-						}, cameraLanguage() === 'zh' ? 'EN' : '中文'),
 						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:() => exportCameraConfiguration(state) }, t('Export')) : E([]),
 						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:importCameraConfiguration }, t('Import')) : E([]),
 						isAP ? E('button', { class:'cbi-button camera-monitor-button', click:() => toggleMonitorMode(root) }, root.classList.contains('camera-monitor-mode') ? t('Exit monitor') : t('Monitor')) : E([]),
@@ -1805,7 +1828,14 @@ return view.extend({
 					E('h3', {}, t('HaLow connection history — this boot')),
 					renderLinkHistory(state.linkHistory)
 				]),
-				E('p', { style: 'opacity:.7' }, t('Camera network telemetry refreshes every 2 seconds.'))
+				E('p', { style: 'opacity:.7' }, t('Camera network telemetry refreshes every 2 seconds.')),
+				E('div', { class: 'camera-language-footer' }, [
+					E('button', {
+						class:'cbi-button camera-language-button',
+						title:cameraLanguage() === 'zh' ? t('Switch to English') : t('Switch to Chinese'),
+						click:toggleCameraLanguage
+					}, cameraLanguage() === 'zh' ? 'EN' : '中文')
+				])
 			);
 			window.requestAnimationFrame(() => {
 				const newDeviceScroll = root.querySelector('.camera-table-scroll');

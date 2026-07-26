@@ -24,6 +24,38 @@
 opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.3-1_all.ipk
 ```
 
+## 自动授权新的 Client
+
+远程读取 Client 温度和控制指示灯需要 AP 能通过 SSH 访问 Client。如果所有
+Client 使用相同的管理密码，可以启用自动授权：
+
+```sh
+opkg install sshpass
+mkdir -p /etc/camera-network
+printf '%s\n' '替换成统一的Client管理密码' > /etc/camera-network/client-password
+chmod 600 /etc/camera-network/client-password
+```
+
+后台监控每 10 秒检查一次新连接的 Client。发现其 MAC 地址和管理 IP 后，会
+自动把 AP 公钥加入 Client 的 `/etc/dropbear/authorized_keys`，之后温度和
+灯光控制都通过密钥完成。密码不会显示在网页或配置导出中。
+
+注意：这是用安全性换取便利。获得 AP root 权限的人可以读取这个统一密码，
+因此不要把密码、设备备份或 SSH 私钥提交到 GitHub。
+
+## iPad 或 Mac 同时使用有线与 Wi‑Fi
+
+有线接口手动设置为：
+
+- IP：`192.168.12.2`（或其他未占用的 `192.168.12.x`）
+- 子网掩码：`255.255.255.0`
+- 路由器：留空
+- DNS：留空
+
+这样 `https://192.168.12.1` 通过有线访问 AP，互联网仍通过 Wi‑Fi。Wi‑Fi
+必须使用不同网段，例如 `192.168.10.x`。如果有线接口显示 `169.254.x.x`，
+说明尚未正确配置 AP 管理网段。
+
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。
 
 ## 卸载

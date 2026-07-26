@@ -1,0 +1,47 @@
+#!/bin/sh
+
+PASSWORD_FILE=/etc/camera-network/client-password
+KEY_FILE=/etc/dropbear/camera-network-client-key
+
+[ -x /usr/bin/sshpass ] || exit 0
+[ -s "$PASSWORD_FILE" ] || exit 0
+
+umask 077
+mkdir -p /etc/dropbear
+if [ ! -s "$KEY_FILE" ]; then
+	dropbearkey -t ed25519 -f "$KEY_FILE" >/dev/null 2>&1 || exit 1
+fi
+
+PASSWORD=$(cat "$PASSWORD_FILE")
+[ -n "$PASSWORD" ] || exit 0
+PUBLIC_KEY=$(dropbearkey -y -f "$KEY_FILE" 2>/dev/null | sed -n '/^ssh-/p' | head -n1)
+[ -n "$PUBLIC_KEY" ] || exit 1
+
+ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null |
+	sed -n 's/^\(\([0-9A-F][0-9A-F]:\)\{5\}[0-9A-F][0-9A-F]\).*/\1/p')
+for MAC in $ASSOCIATED; do
+		SECTION="cam_$(printf '%s' "$MAC" | tr 'A-F' 'a-f' | tr -d ':')"
+		[ "$(uci -q get camera_network.$SECTION.remote_paired)" = "1" ] && continue
+
+		LOWER_MAC=$(printf '%s' "$MAC" | tr 'A-F' 'a-f')
+		IP=$(uci -q get "camera_network.$SECTION.last_ip")
+		if [ -z "$IP" ]; then
+			IP=$(ip neigh show dev br-lan 2>/dev/null |
+				awk -v mac="$LOWER_MAC" '$5 == mac && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1; exit }')
+		fi
+		[ -n "$IP" ] || continue
+
+		REMOTE_KEY=$(printf '%s' "$PUBLIC_KEY" | sed "s/'/'\\\\''/g")
+		SSHPASS="$PASSWORD" /usr/bin/sshpass -e dbclient -y -I 6 "root@$IP" \
+			"umask 077; mkdir -p /etc/dropbear; touch /etc/dropbear/authorized_keys; grep -qxF '$REMOTE_KEY' /etc/dropbear/authorized_keys || printf '%s\\n' '$REMOTE_KEY' >> /etc/dropbear/authorized_keys" \
+			>/dev/null 2>&1 || continue
+
+		uci -q delete "camera_network.$SECTION"
+		uci set "camera_network.$SECTION=camera"
+		uci set "camera_network.$SECTION.mac=$MAC"
+		uci set "camera_network.$SECTION.last_ip=$IP"
+		uci set "camera_network.$SECTION.remote_paired=1"
+		uci set "camera_network.$SECTION.remote_leds_enabled=1"
+		uci commit camera_network
+		logger -t camera-network "Automatically authorized Client $MAC at $IP"
+done

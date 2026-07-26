@@ -10,6 +10,7 @@ THERMAL_MITIGATION=0
 LAST_TEMP_SAMPLE=-10
 CLIENT_TEMPERATURES='{}'
 LAST_CLIENT_TEMP_SAMPLE=-10
+LAST_AUTO_PAIR=-10
 
 write_state() {
 	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s}\n' \
@@ -57,6 +58,10 @@ sample_client_temperatures() {
 
 while true; do
 	NOW=$(uptime_seconds)
+	if [ $((NOW - LAST_AUTO_PAIR)) -ge 10 ]; then
+		/usr/sbin/camera-network-auto-pair >/dev/null 2>&1
+		LAST_AUTO_PAIR=$NOW
+	fi
 	if [ $((NOW - LAST_TEMP_SAMPLE)) -ge 5 ]; then
 		STATS=$(/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null)
 		VALUE=$(printf '%s\n' "$STATS" |
