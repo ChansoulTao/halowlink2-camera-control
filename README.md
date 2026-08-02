@@ -16,6 +16,7 @@ pages.
 - Automatic Client-to-camera association
 - Reachability and latency checks
 - AP and remote Client indicator-light controls
+- One-click remote Client pairing from the AP dashboard; the Client password is used once and never stored
 - Responsive light/dark interface designed for iPad and phone use
 - Dismissible warnings for weak links, offline devices, and high temperatures
 - Boot-to-HaLow-ready timing
@@ -34,17 +35,18 @@ or LuCI paths and can require adaptation.
 
 ## Install
 
-Download the latest `.ipk` from `outputs/`, copy it to `/tmp/` on the
-HaLowLink 2, then install it over SSH:
+Download the latest `.ipk` from `outputs/`, copy it to `/tmp/` on both the AP
+and every Client that should support remote light control, then install it over
+SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+opkg install /tmp/luci-app-camera-network_1.1.0-1_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.0.2-1_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.1.0-1_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -52,6 +54,33 @@ will be available from the main interface.
 
 See [the Chinese installation guide](outputs/Camera-Network-安装说明.md) for
 additional details.
+
+## Pair a new Client
+
+1. Use the HaLowLink built-in setup portal to put the new device in
+   Client/Extender mode and join the AP's HaLow SSID.
+2. Install the same Camera Network IPK on the Client. This enables SSH and
+   installs the local light-control helper.
+3. Open Camera Network on the AP. In the detected Client card, click **Pair**.
+4. Enter the Client administrator password once.
+
+The AP creates its own Ed25519 key and authorizes only the public key on the
+Client. The password is sent directly to the Client over its local HTTPS
+management interface for that pairing request, then discarded. It is not
+written to UCI, files, logs, backups, or this repository. Later temperature and
+light-control operations use key authentication.
+
+## Build the IPK
+
+On macOS or Linux:
+
+```sh
+./scripts/build-ipk.sh
+```
+
+The output is written to `outputs/`. The build uses the gzip-compressed outer
+tar format expected by OpenWrt 23.05; Debian-style `ar` packages are not
+accepted by the HaLowLink 2 firmware.
 
 ## Source layout
 

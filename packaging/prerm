@@ -1,0 +1,9 @@
+#!/bin/sh
+
+[ -n "$IPKG_INSTROOT" ] && exit 0
+/etc/init.d/camera-network-monitor stop 2>/dev/null
+/etc/init.d/camera-network-monitor disable 2>/dev/null
+if [ "$PKG_UPGRADE" != "1" ] && [ -f /www/index.html.camera-network-original ]; then
+	mv /www/index.html.camera-network-original /www/index.html
+fi
+exit 0

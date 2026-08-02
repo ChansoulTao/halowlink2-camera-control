@@ -525,13 +525,15 @@ function renderRemoteClientLEDSwitch(mac, online) {
 	const ip = profile.lastIP;
 	if (!profile.remotePaired) {
 		const pair = E('button', { class:'cbi-button', click:async ev => {
-			const control=ev.currentTarget; control.disabled=true;
+			const control=ev.currentTarget; let password=null; control.disabled=true;
 			try {
-				await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, 'on']);
+				password = window.prompt(_('Enter the Client administrator password. It is used once for pairing and is not stored.'));
+				if (!password) return;
+				await fs.exec('/usr/sbin/camera-network-pair-client', [ip], { CAMERA_CLIENT_PASSWORD:password });
 				uci.set('camera_network', section, 'remote_paired', '1'); await uci.save(); await uci.apply(10);
 				showCameraToast(_('Client paired — refreshing'));
 			} catch (error) { showCameraToast(_('Pairing failed — authorize this AP on the Client'), true); }
-			finally { control.disabled=!ip; }
+			finally { password=null; control.disabled=!ip; }
 		} }, _('Pair'));
 		if (!ip) pair.disabled=true;
 		return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [

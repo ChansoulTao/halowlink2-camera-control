@@ -1,0 +1,22 @@
+#!/bin/sh
+
+[ -n "$IPKG_INSTROOT" ] && exit 0
+chmod 0755 /usr/sbin/camera-network-monitor \
+	/usr/sbin/camera-network-leds \
+	/usr/sbin/camera-network-client-leds \
+	/usr/sbin/camera-network-pair-client \
+	/etc/init.d/camera-network-monitor 2>/dev/null
+[ -f /usr/share/camera-network/index.html ] && \
+	cp /usr/share/camera-network/index.html /www/index.html
+/etc/init.d/camera-network-monitor enable
+/etc/init.d/camera-network-monitor restart
+/usr/sbin/camera-network-leds apply >/dev/null 2>&1
+if [ "$(uci -q get wireless.default_radio1.mode)" = "sta" ]; then
+	uci -q set dropbear.@dropbear[0].enable='1'
+	uci -q commit dropbear
+	/etc/init.d/dropbear enable
+	/etc/init.d/dropbear restart
+fi
+rm -f /tmp/luci-indexcache
+/etc/init.d/rpcd restart
+exit 0
