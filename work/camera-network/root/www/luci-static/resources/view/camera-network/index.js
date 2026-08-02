@@ -118,6 +118,7 @@ body.camera-sidebar-hidden #mainmenu {
 	border-radius: 10px;
 	box-shadow: 0 12px 30px rgba(0,0,0,.18);
 	color:var(--camera-navy);
+	min-width:0;
 }
 .camera-dashboard .cbi-section .cbi-section {
 	background: var(--camera-surface-2);
@@ -226,7 +227,7 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-alert-message { min-width:0;flex:1; }
 .camera-dashboard .camera-alert-close { appearance:none;border:0;background:rgba(255,255,255,.1);color:currentColor;width:32px;height:32px;flex:0 0 32px;border-radius:50%;font-size:1.2rem;line-height:1;cursor:pointer; }
 .camera-dashboard .camera-alert-close:hover { background:rgba(255,255,255,.2); }
-.camera-dashboard .camera-chart { width: 100%; height: auto; min-height: 170px; display: block; }
+.camera-dashboard .camera-chart { display:block;width:100%;max-width:100%;height:auto;min-height:170px; }
 .camera-dashboard .camera-device-details { position: relative; }
 .camera-dashboard .camera-device-details summary {
 	cursor: pointer;
@@ -337,6 +338,10 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-console-title .camera-console-subtitle { display:none; }
 	.camera-dashboard .camera-toolbar-actions { gap:.4rem; }
 	.camera-dashboard .camera-toolbar-actions .cbi-button { min-width:0;padding:.5rem .7rem; }
+}
+@media (max-width: 1024px) {
+	.camera-dashboard .camera-assignment-row { grid-template-columns:1fr;align-items:stretch; }
+	.camera-dashboard .camera-assignment-row select { min-height:44px; }
 }
 @media (max-width: 700px) {
 	.camera-dashboard { font-size: 16px; }
