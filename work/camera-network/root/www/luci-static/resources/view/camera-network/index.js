@@ -1180,16 +1180,21 @@ function drawAPChart(canvas) {
 		ctx.beginPath(); ctx.moveTo(45, y); ctx.lineTo(585, y); ctx.stroke();
 		ctx.fillText(String(value), 5, y + 4);
 	}
-	ctx.fillText('5 min ago', 45, 168);
-	ctx.fillText('now', 557, 168);
+	const allSamples = Array.from(apSignalSamples.values()).flat();
 	const now = Date.now();
+	const oldestSample = allSamples.length ? Math.min(...allSamples.map(sample => Number(sample.time) || now)) : now;
+	const windowStart = Math.max(now - 300000, oldestSample);
+	const windowDuration = Math.max(1000, now - windowStart);
+	const collectedSeconds = Math.max(1, Math.round(windowDuration / 1000));
+	ctx.fillText(collectedSeconds >= 60 ? `${Math.floor(collectedSeconds / 60)} min ago` : `${collectedSeconds} sec ago`, 45, 168);
+	ctx.fillText('now', 557, 168);
 	Array.from(apSignalSamples.entries()).forEach(([mac, samples], seriesIndex) => {
 		const color = colors[seriesIndex % colors.length];
 		for (const outage of apOutages.get(mac) || []) {
 			if (outage.end < now - 300000)
 				continue;
-			const x1 = 585 - (Math.max(0, Math.min(300000, now - outage.start)) / 300000) * 540;
-			const x2 = 585 - (Math.max(0, Math.min(300000, now - outage.end)) / 300000) * 540;
+			const x1 = 45 + Math.max(0, Math.min(1, (outage.start - windowStart) / windowDuration)) * 540;
+			const x2 = 45 + Math.max(0, Math.min(1, (outage.end - windowStart) / windowDuration)) * 540;
 			ctx.fillStyle = `${color}24`;
 			ctx.fillRect(Math.min(x1, x2), 28, Math.max(3, Math.abs(x2 - x1)), 112);
 			ctx.fillStyle = color;
@@ -1206,8 +1211,7 @@ function drawAPChart(canvas) {
 				started = false;
 				continue;
 			}
-			const age = Math.max(0, Math.min(300000, now - sample.time));
-			const x = 585 - (age / 300000) * 540;
+			const x = 45 + Math.max(0, Math.min(1, (sample.time - windowStart) / windowDuration)) * 540;
 			const y = 140 - Math.max(0, Math.min(1, (sample.signal + 100) / 70)) * 112;
 			if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
 		}
@@ -1215,7 +1219,7 @@ function drawAPChart(canvas) {
 	});
 }
 
-function renderAPSignalHistory() {
+function renderAPSignalHistory(devices, bridgePorts) {
 	const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
 	const canvas = E('canvas', { class: 'camera-chart', width: Math.round(600 * ratio), height: Math.round(180 * ratio), 'data-pixel-ratio': ratio });
 	const entries = Array.from(apSignalSamples.entries());
@@ -1227,8 +1231,16 @@ function renderAPSignalHistory() {
 		E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
 			E('h3', {}, _('Client signal history — last 5 minutes')),
 			E('div', { style: 'display:flex;gap:.8rem;flex-wrap:wrap;font-size:.82rem;font-weight:700' }, entries.map((entry, index) => {
-				const profile = cameraProfile(entry[0]);
-				return E('span', { style: `color:${colors[index % colors.length]}` }, `● ${profile.name || entry[0].slice(-8)}`);
+				const clientMac = entry[0];
+				const clientProfile = cameraProfile(clientMac);
+				const assigned = clientProfile.boundCameraMac
+					? { mac:clientProfile.boundCameraMac }
+					: automaticCameraForClient(clientMac, devices || [], bridgePorts);
+				const assignedProfile = assigned ? cameraProfile(assigned.mac) : null;
+				const name = assignedProfile && assignedProfile.name
+					? String(assignedProfile.name).trim()
+					: assigned && assigned.fallbackName ? assigned.fallbackName : clientDisplayName(clientMac, true);
+				return E('span', { style: `color:${colors[index % colors.length]}` }, `● ${name}`);
 			}))
 		]),
 		ready ? canvas : E('p', {}, E('em', {}, _('Collecting samples… the curve appears after two refreshes.'))),
@@ -1610,7 +1622,7 @@ return view.extend({
 			const roleOverview = isAP
 				? E([], [
 						renderHalowClients(displayPeers, state.boot.clientTemperatures || {}, devices, state.bridgePorts),
-					renderAPSignalHistory(),
+					renderAPSignalHistory(devices, state.bridgePorts),
 					renderCameraAssignments(state.halow.peers, devices, state.bridgePorts)
 				])
 				: E([], [
