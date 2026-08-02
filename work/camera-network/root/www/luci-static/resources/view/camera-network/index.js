@@ -896,16 +896,25 @@ function renderReadiness(peers, devices) {
 	]);
 }
 
-function renderBootRecovery(boot) {
+function renderBootRecovery(boot, peers) {
 	const value = seconds => Number.isFinite(Number(seconds)) ? formatDuration(Number(seconds)) : _('Waiting…');
+	const recoveries = boot.clientRecoveries || {};
+	const clients = (peers || []).map(peer => {
+		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
+		return E('div', { class:'camera-boot-step' }, [
+			E('small', {}, clientDisplayName(mac, false)),
+			E('strong', { style:'display:block;font-size:1.25rem' }, value(recoveries[mac])),
+			E('small', { style:'display:block;opacity:.6;margin-top:.25rem' }, _('Power-on → AP connected'))
+		]);
+	});
 	return E('div', { class:'cbi-section camera-device-section' }, [
 		E('h3', {}, _('Power-on recovery — this boot')),
 		E('div', { class:'camera-boot-grid' }, [
 			E('div', { class:'camera-boot-step' }, [E('small', {}, _('AP monitor ready')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.ap))]),
-			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First HaLow client')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.client))]),
+			...clients,
 			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First pinned camera')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.camera))])
 		]),
-		E('small', { style:'display:block;opacity:.65;margin-top:.55rem' }, _('Measured continuously by the AP, even when this page is closed.'))
+		E('small', { style:'display:block;opacity:.65;margin-top:.55rem' }, _('Each Client time is measured from its own last power-on until it connected to the AP. Recorded continuously even when this page is closed.'))
 	]);
 }
 
@@ -1615,7 +1624,7 @@ return view.extend({
 				linkAlert,
 				deviceAlert,
 				roleOverview,
-				isAP ? renderBootRecovery(state.boot) : E([]),
+				isAP ? renderBootRecovery(state.boot, displayPeers) : E([]),
 				E('div', { class: 'cbi-section camera-device-section camera-config-only' }, [
 					E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
 						E('h3', {}, _('Discovered devices')),

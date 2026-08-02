@@ -9,19 +9,22 @@ TEMPERATURE=
 THERMAL_MITIGATION=0
 LAST_TEMP_SAMPLE=-10
 CLIENT_TEMPERATURES='{}'
+CLIENT_RECOVERIES='{}'
 LAST_CLIENT_TEMP_SAMPLE=-10
 
 write_state() {
-	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s}\n' \
-		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" "$CLIENT_TEMPERATURES" > "$OUT.tmp"
+	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s,"clientRecoveries":%s}\n' \
+		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" "$CLIENT_TEMPERATURES" "$CLIENT_RECOVERIES" > "$OUT.tmp"
 	mv "$OUT.tmp" "$OUT"
 }
 
 sample_client_temperatures() {
-	local ASSOCIATED SECTION MAC IP STATS_FILE SSH_PID WATCHDOG STATS VALUE MITIGATION JSON COMMA
+	local ASSOCIATED SECTION MAC IP STATS_FILE SSH_PID WATCHDOG STATS VALUE MITIGATION JSON COMMA RECOVERY_JSON RECOVERY_COMMA BOOT_ID LINK_SECONDS CACHE_FILE CACHED_BOOT
 	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
 	JSON='{'
 	COMMA=
+	RECOVERY_JSON='{'
+	RECOVERY_COMMA=
 	for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.remote_paired='1'$/\1/p"); do
 		MAC=$(uci -q get camera_network.$SECTION.mac | tr 'a-f' 'A-F')
 		IP=$(uci -q get camera_network.$SECTION.last_ip)
@@ -31,7 +34,7 @@ sample_client_temperatures() {
 
 		STATS_FILE="/tmp/camera-network-client-stats.$$"
 		ssh -q -y -I 4 -i /etc/dropbear/camera-network-client-key "root@$IP" \
-			"/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null" > "$STATS_FILE" 2>/dev/null &
+			'echo "__BOOT_ID__=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"; echo "__LINK_SECONDS__=$(dmesg 2>/dev/null | sed -n "s/^\[[[:space:]]*\([0-9][0-9.]*\)\].*wlan0: associated.*/\1/p" | head -n1)"; /sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null' > "$STATS_FILE" 2>/dev/null &
 		SSH_PID=$!
 		( sleep 5; kill "$SSH_PID" 2>/dev/null ) &
 		WATCHDOG=$!
@@ -40,6 +43,18 @@ sample_client_temperatures() {
 		wait "$WATCHDOG" 2>/dev/null
 		STATS=$(cat "$STATS_FILE" 2>/dev/null)
 		rm -f "$STATS_FILE"
+		BOOT_ID=$(printf '%s\n' "$STATS" | sed -n 's/^__BOOT_ID__=//p' | head -n1)
+		LINK_SECONDS=$(printf '%s\n' "$STATS" | sed -n 's/^__LINK_SECONDS__=//p' | head -n1 | cut -d. -f1)
+		CACHE_FILE="/tmp/camera-network-client-recovery-$(printf '%s' "$MAC" | tr -d ':')"
+		CACHED_BOOT=$(sed -n '1p' "$CACHE_FILE" 2>/dev/null)
+		if [ -n "$BOOT_ID" ] && [ "$BOOT_ID" != "$CACHED_BOOT" ]; then
+			case "$LINK_SECONDS" in ''|*[!0-9]*) ;; *) printf '%s\n%s\n' "$BOOT_ID" "$LINK_SECONDS" > "$CACHE_FILE" ;; esac
+		fi
+		LINK_SECONDS=$(sed -n '2p' "$CACHE_FILE" 2>/dev/null)
+		case "$LINK_SECONDS" in
+			''|*[!0-9]*) ;;
+			*) RECOVERY_JSON="${RECOVERY_JSON}${RECOVERY_COMMA}\"${MAC}\":${LINK_SECONDS}"; RECOVERY_COMMA=, ;;
+		esac
 
 		VALUE=$(printf '%s\n' "$STATS" |
 			sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' |
@@ -53,6 +68,7 @@ sample_client_temperatures() {
 		COMMA=,
 	done
 	CLIENT_TEMPERATURES="${JSON}}"
+	CLIENT_RECOVERIES="${RECOVERY_JSON}}"
 }
 
 while true; do
