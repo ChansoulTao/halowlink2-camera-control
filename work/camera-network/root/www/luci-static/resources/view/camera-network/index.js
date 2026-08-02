@@ -95,8 +95,10 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-led-switch-on .camera-led-switch-track { background:#16a078; }
 .camera-dashboard .camera-led-switch-on .camera-led-switch-knob { transform:translateX(22px); }
 .camera-dashboard .camera-led-switch-label { min-width:2.2rem;color:var(--camera-navy);font-weight:800; }
-.camera-dashboard .camera-boot-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem; }
-.camera-dashboard .camera-boot-step { padding:.8rem;border-radius:8px;background:var(--camera-surface-2); }
+.camera-dashboard .camera-boot-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.5rem; }
+.camera-dashboard .camera-boot-step { min-width:0;padding:.65rem .7rem;border-radius:8px;background:var(--camera-surface-2); }
+.camera-dashboard .camera-boot-step small { display:block;overflow-wrap:anywhere;line-height:1.25; }
+.camera-dashboard .camera-boot-step strong { margin-top:.2rem;white-space:nowrap; }
 .camera-dashboard h2,
 .camera-dashboard h3,
 .camera-dashboard .cbi-section h2,
@@ -916,13 +918,15 @@ function renderReadiness(peers, devices) {
 	]);
 }
 
-function renderBootRecovery(boot, peers) {
+function renderBootRecovery(boot, peers, devices, bridgePorts) {
 	const value = seconds => Number.isFinite(Number(seconds)) ? formatDuration(Number(seconds)) : _('Waiting…');
 	const recoveries = boot.clientRecoveries || {};
 	const clients = (peers || []).map(peer => {
 		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
+		const assigned = automaticCameraForClient(mac, devices || [], bridgePorts);
+		const name = assigned ? (cameraProfile(assigned.mac).name || assigned.fallbackName || _('Camera')) : clientDisplayName(mac, false);
 		return E('div', { class:'camera-boot-step' }, [
-			E('small', {}, clientDisplayName(mac, false)),
+			E('small', {}, name),
 			E('strong', { style:'display:block;font-size:1.25rem' }, value(recoveries[mac])),
 			E('small', { style:'display:block;opacity:.6;margin-top:.25rem' }, _('Power-on → AP connected'))
 		]);
@@ -1644,7 +1648,7 @@ return view.extend({
 				linkAlert,
 				deviceAlert,
 				roleOverview,
-				isAP ? renderBootRecovery(state.boot, displayPeers) : E([]),
+				isAP ? renderBootRecovery(state.boot, displayPeers, devices, state.bridgePorts) : E([]),
 				E('div', { class: 'cbi-section camera-device-section camera-config-only' }, [
 					E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
 						E('h3', {}, _('Discovered devices')),
