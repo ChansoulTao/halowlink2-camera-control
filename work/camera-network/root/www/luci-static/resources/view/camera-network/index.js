@@ -165,12 +165,16 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-client-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.8rem; }
 .camera-dashboard .camera-client-card { padding:1rem !important;border-left:3px solid #16a078 !important; }
 .camera-dashboard .camera-client-card-header { display:flex;justify-content:space-between;align-items:center;gap:.75rem;margin-bottom:.8rem; }
+.camera-dashboard .camera-client-card-header > div:first-child { min-width:0; }
+.camera-dashboard .camera-client-card-header strong { display:block;overflow-wrap:anywhere; }
 .camera-dashboard .camera-client-card-status { display:flex;align-items:center;gap:.5rem; }
 .camera-dashboard .camera-client-temperature { padding:.28rem .5rem;border-radius:999px;background:#253129;color:#34d399;font-size:.78rem;font-weight:850;white-space:nowrap; }
 .camera-dashboard .camera-client-temperature.warm { background:#3a2d0d;color:#fbbf24; }
 .camera-dashboard .camera-client-temperature.hot { background:#3b1719;color:#fca5a5; }
 .camera-dashboard .camera-client-mac { color:var(--camera-slate);font-size:.78rem;font-family:ui-monospace,SFMono-Regular,monospace; }
 .camera-dashboard .camera-assignment-row { display:grid;grid-template-columns:minmax(180px,.7fr) minmax(280px,1.3fr);gap:.8rem;align-items:center;padding:.7rem 0;border-bottom:1px solid var(--camera-border); }
+.camera-dashboard .camera-assignment-row > div { min-width:0; }
+.camera-dashboard .camera-assignment-row select { width:100%;min-width:0; }
 .camera-dashboard .camera-assignment-row:last-child { border-bottom:0; }
 .camera-dashboard .camera-client-signal-row { display:flex;justify-content:space-between;align-items:flex-end;gap:.75rem;margin-top:.2rem; }
 .camera-dashboard .camera-client-signal-value { font-size:2rem;line-height:1;font-weight:850; }
@@ -231,6 +235,7 @@ body.camera-sidebar-hidden #mainmenu {
 	position: absolute;
 	z-index: 20;
 	min-width: 260px;
+	max-width: min(420px, calc(100vw - 2rem));
 	margin: .25rem 0 0;
 	padding: .8rem;
 	background:#20242b;
@@ -339,6 +344,8 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-filter-group .cbi-button:first-child { grid-column:1 / -1; }
 	.camera-dashboard .camera-assignment-row { grid-template-columns:1fr; }
 	.camera-dashboard .camera-boot-grid { grid-template-columns:1fr; }
+	.camera-dashboard .camera-client-card-header { align-items:flex-start;flex-wrap:wrap; }
+	.camera-dashboard .camera-client-card-status { margin-left:auto; }
 	.camera-dashboard .camera-export-button,
 	.camera-dashboard .camera-live-label { display:none !important; }
 	.camera-dashboard .camera-console-title { overflow:hidden; }
@@ -495,6 +502,17 @@ function cameraProfile(mac) {
 	};
 }
 
+function automaticCameraForClient(clientMac, devices, bridgePorts) {
+	const clientProfile = cameraProfile(clientMac);
+	if (clientProfile.boundCameraMac)
+		return devices.find(device => device.mac === clientProfile.boundCameraMac) || null;
+	const clientPort = bridgePorts && bridgePorts.get(clientMac);
+	if (!clientPort)
+		return null;
+	const candidates = devices.filter(device => device.mac !== clientMac && cameraProfile(device.mac).pinned && bridgePorts.get(device.mac) === clientPort);
+	return candidates.length === 1 ? candidates[0] : null;
+}
+
 function clientDisplayName(mac, fallbackToMac) {
 	const client = cameraProfile(mac);
 	if (client.boundCameraMac) {
@@ -580,7 +598,7 @@ async function bindCameraToClient(clientMac, cameraMac) {
 	uci.set('camera_network', section, 'bound_camera_mac', cameraMac || '');
 	await uci.save();
 	await uci.apply(10);
-	showCameraToast(cameraProfile(mac).pinned ? _('Camera pinned') : _('Camera unpinned'));
+	showCameraToast(cameraMac ? _('Camera assigned to Client') : _('Camera assignment cleared'));
 }
 
 function parseBridgeFDB(text) {
@@ -714,7 +732,7 @@ function renderSignalGauge(peer) {
 	]);
 }
 
-function renderHalowClients(peers, clientTemperatures) {
+function renderHalowClients(peers, clientTemperatures, devices, bridgePorts) {
 	if (!peers.length)
 		return E('div', { class: 'cbi-section camera-device-section' }, [
 			E('h3', {}, _('HaLow clients')),
@@ -728,6 +746,8 @@ function renderHalowClients(peers, clientTemperatures) {
 		E('div', { class: 'camera-client-grid' }, peers.map(peer => {
 			const mac = String(peer.mac || peer.bssid || '—').toUpperCase();
 			const profile = cameraProfile(mac);
+			const assignedCamera = automaticCameraForClient(mac, devices || [], bridgePorts);
+			const displayName = assignedCamera ? (cameraProfile(assignedCamera.mac).name || assignedCamera.fallbackName || _('Camera')) : clientDisplayName(mac, false);
 			const online = peer._online !== false;
 			const metrics = signalMetrics(online ? peer.signal : null, online ? peer.noise : null);
 			const outages = apOutages.get(mac) || [];
@@ -739,7 +759,7 @@ function renderHalowClients(peers, clientTemperatures) {
 			return E('div', { class: 'cbi-section camera-client-card', style:online ? '' : 'border-left-color:#d33b32 !important' }, [
 				E('div', { class: 'camera-client-card-header' }, [
 					E('div', {}, [
-						E('strong', {}, clientDisplayName(mac, false)),
+						E('strong', {}, displayName),
 						E('div', { class: 'camera-client-mac' }, mac)
 					]),
 					E('div', { class:'camera-client-card-status' }, [
@@ -947,7 +967,7 @@ function renderCameraAssignments(peers, devices, bridgePorts) {
 			if (chosenMac)
 				select.value = chosenMac;
 			return E('div', { class:'camera-assignment-row' }, [
-				E('div', {}, [E('strong', {}, clientProfile.name || _('HaLow Client')), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
+				E('div', {}, [E('strong', {}, chosen ? (cameraProfile(chosen.mac).name || chosen.fallbackName || _('Camera')) : clientProfile.name || _('HaLow Client')), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
 				E('div', {}, [
 					chosen ? E('div', { style:'font-weight:750;margin-bottom:.35rem' }, `→ ${cameraProfile(chosen.mac).name || chosen.fallbackName || _('Camera')} · ${chosen.ip || '—'}`) : '',
 					select,
@@ -1572,7 +1592,7 @@ return view.extend({
 			]);
 			const roleOverview = isAP
 				? E([], [
-					renderHalowClients(displayPeers, state.boot.clientTemperatures || {}),
+						renderHalowClients(displayPeers, state.boot.clientTemperatures || {}, devices, state.bridgePorts),
 					renderAPSignalHistory(),
 					renderCameraAssignments(state.halow.peers, devices, state.bridgePorts)
 				])
