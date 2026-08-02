@@ -227,7 +227,14 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-alert-message { min-width:0;flex:1; }
 .camera-dashboard .camera-alert-close { appearance:none;border:0;background:rgba(255,255,255,.1);color:currentColor;width:32px;height:32px;flex:0 0 32px;border-radius:50%;font-size:1.2rem;line-height:1;cursor:pointer; }
 .camera-dashboard .camera-alert-close:hover { background:rgba(255,255,255,.2); }
-.camera-dashboard .camera-chart { display:block;width:100%;max-width:100%;height:auto;min-height:170px; }
+.camera-dashboard canvas.camera-chart {
+	display:block;
+	width:100% !important;
+	max-width:100%;
+	height:auto !important;
+	min-height:0 !important;
+	aspect-ratio:10 / 3;
+}
 .camera-dashboard .camera-device-details { position: relative; }
 .camera-dashboard .camera-device-details summary {
 	cursor: pointer;
