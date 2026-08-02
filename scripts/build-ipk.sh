@@ -3,7 +3,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-VERSION="${VERSION:-1.1.4-1}"
+VERSION="${VERSION:-1.1.5-1}"
 OUTPUT="${1:-$ROOT_DIR/outputs/luci-app-camera-network_${VERSION}_all.ipk}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM

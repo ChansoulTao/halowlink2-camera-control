@@ -73,8 +73,9 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-ready-no small { color:#ffe4a3 !important; }
 .camera-dashboard .camera-ready-yes small { color:#b7f7da !important; }
 .camera-dashboard .camera-led-control { display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
+.camera-dashboard .camera-led-control > div:first-child { min-width:0; }
 .camera-dashboard .camera-led-control strong { display:block;color:var(--camera-navy); }
-.camera-dashboard .camera-led-control small { color:var(--camera-slate); }
+.camera-dashboard .camera-led-control small { display:block;color:var(--camera-slate);overflow-wrap:anywhere;line-height:1.25; }
 .camera-dashboard .camera-temperature-panel { display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
 .camera-dashboard .camera-temperature-value { font-size:1.65rem;font-weight:900;line-height:1;color:#34d399; }
 .camera-dashboard .camera-temperature-value.warm { color:#fbbf24; }
@@ -330,8 +331,7 @@ body.camera-sidebar-hidden #mainmenu {
 }
 @media (max-width: 820px) {
 	.camera-dashboard .camera-summary-grid { grid-template-columns: 1.25fr .9fr; }
-	.camera-dashboard .camera-status-strip { grid-template-columns:1fr 1fr; }
-	.camera-dashboard .camera-status-strip .camera-ap-summary { grid-column:1 / -1; }
+	.camera-dashboard .camera-status-strip { grid-template-columns:1fr; }
 	.camera-dashboard .camera-console-bar { gap:.6rem;padding:.65rem .75rem; }
 	.camera-dashboard .camera-console-title h2 { font-size:1.15rem;white-space:nowrap; }
 	.camera-dashboard .camera-console-title .camera-console-subtitle { display:none; }
