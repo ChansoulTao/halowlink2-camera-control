@@ -95,10 +95,12 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-led-switch-on .camera-led-switch-track { background:#16a078; }
 .camera-dashboard .camera-led-switch-on .camera-led-switch-knob { transform:translateX(22px); }
 .camera-dashboard .camera-led-switch-label { min-width:2.2rem;color:var(--camera-navy);font-weight:800; }
-.camera-dashboard .camera-boot-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.5rem; }
+.camera-dashboard .camera-boot-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:.5rem;min-width:0; }
 .camera-dashboard .camera-boot-step { min-width:0;padding:.65rem .7rem;border-radius:8px;background:var(--camera-surface-2); }
 .camera-dashboard .camera-boot-step small { display:block;overflow-wrap:anywhere;line-height:1.25; }
 .camera-dashboard .camera-boot-step strong { margin-top:.2rem;white-space:nowrap; }
+.camera-dashboard .camera-boot-recovery-title { margin:0 0 .55rem !important;font-size:.82rem !important;letter-spacing:.045em !important;line-height:1.2;overflow-wrap:anywhere; }
+.camera-dashboard .camera-boot-recovery-note { display:block;max-width:100%;line-height:1.3;overflow-wrap:anywhere; }
 .camera-dashboard h2,
 .camera-dashboard h3,
 .camera-dashboard .cbi-section h2,
@@ -923,8 +925,14 @@ function renderBootRecovery(boot, peers, devices, bridgePorts) {
 	const recoveries = boot.clientRecoveries || {};
 	const clients = (peers || []).map(peer => {
 		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
-		const assigned = automaticCameraForClient(mac, devices || [], bridgePorts);
-		const name = assigned ? (cameraProfile(assigned.mac).name || assigned.fallbackName || _('Camera')) : clientDisplayName(mac, false);
+		const clientProfile = cameraProfile(mac);
+		const assigned = clientProfile.boundCameraMac
+			? { mac:clientProfile.boundCameraMac }
+			: automaticCameraForClient(mac, devices || [], bridgePorts);
+		const assignedProfile = assigned ? cameraProfile(assigned.mac) : null;
+		const name = assignedProfile && assignedProfile.name
+			? String(assignedProfile.name).trim()
+			: assigned && assigned.fallbackName ? assigned.fallbackName : clientDisplayName(mac, false);
 		return E('div', { class:'camera-boot-step' }, [
 			E('small', {}, name),
 			E('strong', { style:'display:block;font-size:1.25rem' }, value(recoveries[mac])),
@@ -932,13 +940,13 @@ function renderBootRecovery(boot, peers, devices, bridgePorts) {
 		]);
 	});
 	return E('div', { class:'cbi-section camera-device-section' }, [
-		E('h3', {}, _('Power-on recovery — this boot')),
+		E('h3', { class:'camera-boot-recovery-title' }, _('Power-on recovery — this boot')),
 		E('div', { class:'camera-boot-grid' }, [
 			E('div', { class:'camera-boot-step' }, [E('small', {}, _('AP monitor ready')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.ap))]),
 			...clients,
 			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First pinned camera')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.camera))])
 		]),
-		E('small', { style:'display:block;opacity:.65;margin-top:.55rem' }, _('Each Client time is measured from its own last power-on until it connected to the AP. Recorded continuously even when this page is closed.'))
+		E('small', { class:'camera-boot-recovery-note', style:'opacity:.65;margin-top:.55rem' }, _('Each Client time is measured from its own last power-on until it connected to the AP. Recorded continuously even when this page is closed.'))
 	]);
 }
 
