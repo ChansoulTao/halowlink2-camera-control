@@ -1,6 +1,11 @@
 .DS_Store
 
-# Device-specific backups and inspection output
+# Device-specific backups, credentials, and inspection output
+/halowlink2-*.tar.gz
+/*.ipk
+*.key
+*.pem
+authorized_keys
 work/backups/
 work/inspection/
 work/snapshot/
@@ -21,3 +26,6 @@ outputs/luci-app-camera-network_1.0.1-1_all.ipk
 
 # Cache-busting deployment snapshots; index.js is the maintained source
 work/camera-network/root/www/luci-static/resources/view/camera-network/index-v*.js
+
+# macOS metadata and AppleDouble sidecars
+._*

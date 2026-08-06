@@ -1,14 +1,36 @@
 #!/bin/sh
 
-ip="$1"
-mode="$2"
+ip="${1:-}"
+expected_mac=$(printf '%s' "${2:-}" | tr 'a-f' 'A-F')
+mode="${3:-}"
 
-case "$ip" in
-	*[!0-9.]*|'' ) exit 2 ;;
-esac
+valid_ip() {
+	case "$1" in ''|*[!0-9.]*) return 1 ;; esac
+	[ "$(printf '%s\n' "$1" | awk -F. '
+		NF == 4 {
+			for (i = 1; i <= 4; i++)
+				if ($i !~ /^[0-9]+$/ || $i > 255)
+					exit
+			print "valid"
+		}')" = valid ]
+}
+
 case "$mode" in
 	on|off) ;;
 	*) exit 2 ;;
 esac
+printf '%s\n' "$expected_mac" | grep -qE '^([0-9A-F]{2}:){5}[0-9A-F]{2}$' || exit 2
 
-exec ssh -y -I 6 -i /etc/dropbear/camera-network-client-key "root@$ip" "/usr/sbin/camera-network-leds $mode"
+lease_file=$(uci -q get 'dhcp.@dnsmasq[0].leasefile')
+[ -n "$lease_file" ] || lease_file=/tmp/dhcp.leases
+if [ -r "$lease_file" ]; then
+	lease_ip=$(awk -v wanted="$(printf '%s' "$expected_mac" | tr 'A-F' 'a-f')" -v now="$(date +%s)" '
+		NF >= 3 && tolower($2) == wanted && ($1 == 0 || $1 > now) { address = $3 }
+		END { if (address != "") print address }
+	' "$lease_file")
+	valid_ip "$lease_ip" && ip="$lease_ip"
+fi
+valid_ip "$ip" || exit 2
+
+exec ssh -y -I 6 -i /etc/dropbear/camera-network-client-key "root@$ip" \
+	"actual=\$(cat /sys/class/net/wlan0/address 2>/dev/null | tr 'a-f' 'A-F'); [ \"\$actual\" = '$expected_mac' ] || { echo 'Client identity mismatch' >&2; exit 3; }; exec /usr/sbin/camera-network-leds '$mode'"

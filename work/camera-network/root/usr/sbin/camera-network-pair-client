@@ -1,0 +1,159 @@
+#!/bin/sh
+
+# Pair an AP with one HaLowLink Client without storing its administrator
+# password. LuCI supplies CAMERA_CLIENT_PASSWORD for this process only. The
+# password is exchanged with the Client over HTTPS and discarded after the
+# AP public key has been installed.
+
+# OpenWrt's jshn library initializes some variables lazily, so `set -u` is
+# intentionally avoided here for compatibility with the stock firmware.
+set -e
+
+IP="${1:-}"
+PASSWORD="${CAMERA_CLIENT_PASSWORD:-}"
+KEY_FILE=/etc/dropbear/camera-network-client-key
+PUB_FILE=/tmp/camera-network-client-key.pub
+ZERO_SESSION=00000000000000000000000000000000
+
+case "$IP" in
+	''|*[!0-9.]*) echo "Invalid Client IP address" >&2; exit 2 ;;
+esac
+
+[ -n "$PASSWORD" ] || {
+	echo "Client administrator password is required" >&2
+	exit 2
+}
+
+. /usr/share/libubox/jshn.sh
+
+post_json() {
+	uclient-fetch -q --no-check-certificate -T 12 -O - \
+		--post-data="$1" "https://$IP/ubus/"
+}
+
+if [ ! -s "$KEY_FILE" ]; then
+	umask 077
+	dropbearkey -t ed25519 -f "$KEY_FILE" >/dev/null
+fi
+chmod 0600 "$KEY_FILE"
+dropbearkey -y -f "$KEY_FILE" | sed -n '/^ssh-ed25519 /p' > "$PUB_FILE"
+PUBLIC_KEY="$(awk '{ print $1 " " $2 }' "$PUB_FILE")"
+[ -n "$PUBLIC_KEY" ] || {
+	echo "Unable to create AP pairing key" >&2
+	exit 1
+}
+
+# Authenticate to the Client's local LuCI/ubus endpoint.
+json_init
+json_add_string jsonrpc 2.0
+json_add_int id 1
+json_add_string method call
+json_add_array params
+json_add_string '' "$ZERO_SESSION"
+json_add_string '' session
+json_add_string '' login
+json_add_object ''
+json_add_string username root
+json_add_string password "$PASSWORD"
+json_close_object
+json_close_array
+LOGIN_REPLY="$(post_json "$(json_dump)")"
+SESSION="$(printf '%s' "$LOGIN_REPLY" | jsonfilter -e '@.result[1].ubus_rpc_session' 2>/dev/null || true)"
+unset PASSWORD CAMERA_CLIENT_PASSWORD LOGIN_REPLY
+
+[ -n "$SESSION" ] || {
+	echo "Client login failed; check its IP address and administrator password" >&2
+	exit 3
+}
+
+# Preserve any keys already authorized on the Client.
+json_init
+json_add_string jsonrpc 2.0
+json_add_int id 2
+json_add_string method call
+json_add_array params
+json_add_string '' "$SESSION"
+json_add_string '' file
+json_add_string '' read
+json_add_object ''
+json_add_string path /etc/dropbear/authorized_keys
+json_close_object
+json_close_array
+READ_REPLY="$(post_json "$(json_dump)")"
+EXISTING_KEYS="$(printf '%s' "$READ_REPLY" | jsonfilter -e '@.result[1].data' 2>/dev/null || true)"
+
+if ! printf '%s\n' "$EXISTING_KEYS" | grep -qxF "$PUBLIC_KEY"; then
+	AUTHORIZED_KEYS="${EXISTING_KEYS}${EXISTING_KEYS:+
+}${PUBLIC_KEY}
+"
+else
+	AUTHORIZED_KEYS="${EXISTING_KEYS}
+"
+fi
+
+json_init
+json_add_string jsonrpc 2.0
+json_add_int id 3
+json_add_string method call
+json_add_array params
+json_add_string '' "$SESSION"
+json_add_string '' file
+json_add_string '' write
+json_add_object ''
+json_add_string path /etc/dropbear/authorized_keys
+json_add_string data "$AUTHORIZED_KEYS"
+json_add_int mode 384
+json_close_object
+json_close_array
+WRITE_REPLY="$(post_json "$(json_dump)")"
+printf '%s' "$WRITE_REPLY" | jsonfilter -e '@.result[0]' | grep -qx 0 || {
+	echo "Unable to authorize the AP key on the Client" >&2
+	exit 4
+}
+
+# Enable the Client SSH service so all later operations can use the key.
+json_init
+json_add_string jsonrpc 2.0
+json_add_int id 4
+json_add_string method call
+json_add_array params
+json_add_string '' "$SESSION"
+json_add_string '' uci
+json_add_string '' set
+json_add_object ''
+json_add_string config dropbear
+json_add_string type dropbear
+json_add_object match
+json_close_object
+json_add_object values
+json_add_string enable 1
+json_add_string PasswordAuth on
+json_add_string RootPasswordAuth on
+json_close_object
+json_close_object
+json_close_array
+post_json "$(json_dump)" >/dev/null
+
+for ACTION in enable start; do
+	json_init
+	json_add_string jsonrpc 2.0
+	json_add_int id 5
+	json_add_string method call
+	json_add_array params
+	json_add_string '' "$SESSION"
+	json_add_string '' luci
+	json_add_string '' setInitAction
+	json_add_object ''
+	json_add_string name dropbear
+	json_add_string action "$ACTION"
+	json_close_object
+	json_close_array
+	post_json "$(json_dump)" >/dev/null
+done
+
+unset SESSION AUTHORIZED_KEYS EXISTING_KEYS PUBLIC_KEY READ_REPLY WRITE_REPLY
+sleep 1
+
+# Password authentication is deliberately unavailable from this point on.
+ssh -q -y -I 8 -i "$KEY_FILE" "root@$IP" /usr/sbin/camera-network-leds on >/dev/null
+printf '{"paired":true,"ip":"%s"}\n' "$IP"

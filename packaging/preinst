@@ -1,0 +1,26 @@
+#!/bin/sh
+
+set -eu
+
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+
+original=/www/index.html.camera-network-original
+no_original=/www/index.html.camera-network-no-original
+
+# Record the pre-install state once. The marker prevents an upgrade from
+# mistaking this package's redirect for an original LuCI index page.
+if [ ! -e "$original" ] && [ ! -e "$no_original" ]; then
+	installed_redirect=/usr/share/camera-network/index.html
+	if [ -f /www/index.html ] && [ -f "$installed_redirect" ] && \
+		cmp -s /www/index.html "$installed_redirect"; then
+		# Migrate an older Camera Network install which created the redirect
+		# before the no-original marker existed.
+		: > "$no_original"
+	elif [ -f /www/index.html ]; then
+		cp -p /www/index.html "$original"
+	else
+		: > "$no_original"
+	fi
+fi
+
+exit 0

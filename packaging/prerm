@@ -1,0 +1,30 @@
+#!/bin/sh
+
+set -eu
+
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+
+/etc/init.d/camera-network-monitor stop >/dev/null 2>&1 || true
+/etc/init.d/camera-network-monitor disable >/dev/null 2>&1 || true
+
+if [ "${PKG_UPGRADE:-0}" != "1" ]; then
+	original=/www/index.html.camera-network-original
+	no_original=/www/index.html.camera-network-no-original
+	redirect=/usr/share/camera-network/index.html
+
+	if [ -f "$original" ]; then
+		mv "$original" /www/index.html
+	elif [ -e "$no_original" ]; then
+		# Only remove a page that is still byte-for-byte our redirect. Preserve
+		# anything the administrator replaced while the package was installed.
+		if [ -f /www/index.html ] && [ -f "$redirect" ] && cmp -s /www/index.html "$redirect"; then
+			rm -f /www/index.html
+		elif [ -e /www/index.html ]; then
+			echo "camera-network: preserving administrator-modified /www/index.html" >&2
+		fi
+	fi
+
+	rm -f "$no_original"
+fi
+
+exit 0
