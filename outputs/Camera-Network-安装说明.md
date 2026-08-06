@@ -4,12 +4,12 @@
 
 ## 安装
 
-1. 将 `luci-app-camera-network_1.1.8-1_all.ipk` 上传到设备的 `/tmp/`。
+1. 将 `luci-app-camera-network_1.2.0-4_all.ipk` 上传到设备的 `/tmp/`。
 2. SSH 登录设备。全新的 Client 默认关闭 SSH 时，可在 LuCI 的 Software/软件包页面上传并安装 IPK；安装后会自动启用 SSH。
 3. 使用 SSH 时执行：
 
    ```sh
-   opkg install /tmp/luci-app-camera-network_1.1.8-1_all.ipk
+   opkg install /tmp/luci-app-camera-network_1.2.0-4_all.ipk
    ```
 
 4. 浏览器打开设备 IP。登录后会进入 Camera Network。
@@ -26,15 +26,24 @@ AP 和 Client 都应安装同一个 IPK。AP 提供总览和远程控制，Clien
 
 配对时 AP 会自动生成专用 Ed25519 密钥，把公钥写入 Client，并启用 Client 的 SSH 服务。管理员密码只用于这一次本地 HTTPS 配对请求，不会写入 UCI、文件、日志、备份或 GitHub。后续灯光控制与温度读取全部使用密钥，不再需要密码。
 
+配对后，AP 会读取每台 Client 本机的桥接表，并根据 Client 的有线端口识别其后方 Camera。这样即使多台 Client 在 AP 上共享同一个 HaLow 无线桥端口，也不会依赖 AP 端口号猜测。一个 Camera 只能分配给一台 Client，必要时仍可在页面中手动选择。
+
 ## 升级
 
 上传新版安装包后执行：
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.1.8-1_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-4_all.ipk
 ```
 
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。
+
+## 多 Client 与 Camera 对应
+
+- 每台 Client 和 AP 都安装相同版本的 IPK，并逐台完成配对。
+- 在 `Discovered Devices` 中置顶 Camera 并设置 Camera name。
+- AP 会根据每台 Client 本机的有线桥接信息自动建立对应关系；结果会同步显示在 `Client → Camera Connections`、信号历史和通电恢复区域。
+- 如果一台 Client 后方发现多个设备，可在连接区域手动选择；同一 Camera 不会同时分配给两台 Client。
 
 ## 卸载
 
@@ -49,3 +58,10 @@ opkg remove luci-app-camera-network
 - `Monitor` 适合 iPad 长时间监看。
 - 通电恢复数据从安装后台监测服务后的下一次完整启动开始最准确。
 - 不同固件版本可能需要调整 LuCI 或无线接口名称，安装前建议备份设备配置。
+
+## 项目发布
+
+版本号只在 `packaging/control` 的 `Version` 字段维护。发布前依次运行
+`./scripts/check.sh` 和 `./scripts/build-ipk.sh`，然后创建相同版本的 Git tag
+与 GitHub Release，并上传 `outputs/` 中生成的 IPK。设备备份、配置导出、密码
+和 SSH 密钥不得上传。

@@ -1,100 +1,250 @@
 #!/bin/sh
 
 OUT=/tmp/camera-network-boot.json
+CLIENT_CACHE_DIR=/tmp/camera-network-client-telemetry
+CLIENT_SAMPLE_PID=
+DHCP_LEASE_FILE=$(uci -q get 'dhcp.@dnsmasq[0].leasefile')
+[ -n "$DHCP_LEASE_FILE" ] || DHCP_LEASE_FILE=/tmp/dhcp.leases
+
 uptime_seconds() { cut -d. -f1 /proc/uptime; }
+
 AP_READY=$(uptime_seconds)
 CLIENT_READY=
 CAMERA_READY=
 TEMPERATURE=
 THERMAL_MITIGATION=0
 LAST_TEMP_SAMPLE=-10
+LAST_CLIENT_TEMP_SAMPLE=-10
 CLIENT_TEMPERATURES='{}'
 CLIENT_RECOVERIES='{}'
-LAST_CLIENT_TEMP_SAMPLE=-10
+CLIENT_TELEMETRY='{}'
+
+valid_mac() {
+	printf '%s\n' "$1" | grep -qE '^([0-9A-F]{2}:){5}[0-9A-F]{2}$'
+}
+
+valid_ip() {
+	case "$1" in ''|*[!0-9.]*) return 1 ;; esac
+	[ "$(printf '%s\n' "$1" | awk -F. '
+		NF == 4 {
+			for (i = 1; i <= 4; i++)
+				if ($i !~ /^[0-9]+$/ || $i > 255)
+					exit
+			print "valid"
+		}')" = valid ]
+}
+
+dhcp_ip_for_mac() {
+	local MAC_LOWER NOW_EPOCH
+	[ -r "$DHCP_LEASE_FILE" ] || return 1
+	MAC_LOWER=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+	NOW_EPOCH=$(date +%s)
+	awk -v wanted="$MAC_LOWER" -v now="$NOW_EPOCH" '
+		NF >= 3 && tolower($2) == wanted && ($1 == 0 || $1 > now) { address = $3 }
+		END { if (address != "") print address }
+	' "$DHCP_LEASE_FILE"
+}
+
+resolve_client_ip() {
+	local LEASE_IP SAVED_IP
+	SAVED_IP="$2"
+	LEASE_IP=$(dhcp_ip_for_mac "$1")
+	if valid_ip "$LEASE_IP"; then
+		printf '%s\n' "$LEASE_IP"
+	elif valid_ip "$SAVED_IP"; then
+		printf '%s\n' "$SAVED_IP"
+	else
+		return 1
+	fi
+}
+
+cache_file_for_mac() {
+	printf '%s/%s\n' "$CLIENT_CACHE_DIR" "$(printf '%s' "$1" | tr -d ':')"
+}
 
 write_state() {
-	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s,"clientRecoveries":%s}\n' \
-		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" "$CLIENT_TEMPERATURES" "$CLIENT_RECOVERIES" > "$OUT.tmp"
+	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s,"clientRecoveries":%s,"clientTelemetry":%s}\n' \
+		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" \
+		"$CLIENT_TEMPERATURES" "$CLIENT_RECOVERIES" "$CLIENT_TELEMETRY" > "$OUT.tmp"
 	mv "$OUT.tmp" "$OUT"
 }
 
-sample_client_temperatures() {
-	local ASSOCIATED SECTION MAC IP STATS_FILE SSH_PID WATCHDOG STATS VALUE MITIGATION JSON COMMA RECOVERY_JSON RECOVERY_COMMA BOOT_ID LINK_SECONDS CACHE_FILE CACHED_BOOT
-	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
-	JSON='{'
-	COMMA=
-	RECOVERY_JSON='{'
-	RECOVERY_COMMA=
-	for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.remote_paired='1'$/\1/p"); do
-		MAC=$(uci -q get camera_network.$SECTION.mac | tr 'a-f' 'A-F')
-		IP=$(uci -q get camera_network.$SECTION.last_ip)
-		[ -n "$MAC" ] && [ -n "$IP" ] || continue
-		echo "$ASSOCIATED" | grep -q "$MAC" || continue
-		case "$IP" in *[!0-9.]*|'') continue ;; esac
+collect_one_client() {
+	local EXPECTED_MAC IP CACHE RAW TMP SSH_PID WATCHDOG SSH_STATUS STATS REMOTE_MAC BOOT_ID LINK_SECONDS
+	local OLD_BOOT RECOVERY TEMPERATURE_VALUE MITIGATION WIRED_MACS WIRE
+	EXPECTED_MAC="$1"
+	IP="$2"
+	CACHE="$3"
+	RAW="${CACHE}.$$.raw"
+	TMP="${CACHE}.$$.tmp"
 
-		STATS_FILE="/tmp/camera-network-client-stats.$$"
-		ssh -q -y -I 4 -i /etc/dropbear/camera-network-client-key "root@$IP" \
-			'echo "__BOOT_ID__=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"; echo "__LINK_SECONDS__=$(dmesg 2>/dev/null | sed -n "s/^\[[[:space:]]*\([0-9][0-9.]*\)\].*wlan0: associated.*/\1/p" | head -n1)"; /sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null' > "$STATS_FILE" 2>/dev/null &
-		SSH_PID=$!
-		( sleep 5; kill "$SSH_PID" 2>/dev/null ) &
-		WATCHDOG=$!
-		wait "$SSH_PID" 2>/dev/null
-		kill "$WATCHDOG" 2>/dev/null
-		wait "$WATCHDOG" 2>/dev/null
-		STATS=$(cat "$STATS_FILE" 2>/dev/null)
-		rm -f "$STATS_FILE"
-		BOOT_ID=$(printf '%s\n' "$STATS" | sed -n 's/^__BOOT_ID__=//p' | head -n1)
-		LINK_SECONDS=$(printf '%s\n' "$STATS" | sed -n 's/^__LINK_SECONDS__=//p' | head -n1 | cut -d. -f1)
-		CACHE_FILE="/tmp/camera-network-client-recovery-$(printf '%s' "$MAC" | tr -d ':')"
-		CACHED_BOOT=$(sed -n '1p' "$CACHE_FILE" 2>/dev/null)
-		if [ -n "$BOOT_ID" ] && [ "$BOOT_ID" != "$CACHED_BOOT" ]; then
-			case "$LINK_SECONDS" in ''|*[!0-9]*) ;; *) printf '%s\n%s\n' "$BOOT_ID" "$LINK_SECONDS" > "$CACHE_FILE" ;; esac
-		fi
-		LINK_SECONDS=$(sed -n '2p' "$CACHE_FILE" 2>/dev/null)
-		case "$LINK_SECONDS" in
-			''|*[!0-9]*) ;;
-			*) RECOVERY_JSON="${RECOVERY_JSON}${RECOVERY_COMMA}\"${MAC}\":${LINK_SECONDS}"; RECOVERY_COMMA=, ;;
-		esac
+	ssh -q -y -I 4 -i /etc/dropbear/camera-network-client-key "root@$IP" '
+		CLIENT_MAC=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr "a-f" "A-F")
+		echo "__CLIENT_MAC__=$CLIENT_MAC"
+		echo "__BOOT_ID__=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+		echo "__LINK_SECONDS__=$(dmesg 2>/dev/null | sed -n "s/^\[[[:space:]]*\([0-9][0-9.]*\)\].*wlan0: associated.*/\1/p" | head -n1)"
+		for MEMBER in /sys/class/net/br-lan/brif/*; do
+			[ -r "$MEMBER/port_no" ] || continue
+			[ "${MEMBER##*/}" = "wlan0" ] && continue
+			PORT_RAW=$(cat "$MEMBER/port_no" 2>/dev/null)
+			case "$PORT_RAW" in 0x[0-9a-fA-F]*|[0-9]*) ;; *) continue ;; esac
+			PORT=$((PORT_RAW))
+			/usr/sbin/brctl showmacs br-lan 2>/dev/null |
+				while read ENTRY_PORT ENTRY_MAC ENTRY_LOCAL ENTRY_AGE; do
+					[ "$ENTRY_PORT" = "$PORT" ] && [ "$ENTRY_LOCAL" = "no" ] || continue
+					ENTRY_MAC=$(printf "%s" "$ENTRY_MAC" | tr "a-f" "A-F")
+					echo "__WIRED_MAC__=$ENTRY_MAC"
+				done
+		done
+		/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null
+	' > "$RAW" 2>/dev/null &
+	SSH_PID=$!
+	( sleep 5; kill "$SSH_PID" 2>/dev/null ) &
+	WATCHDOG=$!
+	wait "$SSH_PID" 2>/dev/null
+	SSH_STATUS=$?
+	kill "$WATCHDOG" 2>/dev/null
+	wait "$WATCHDOG" 2>/dev/null
+	[ "$SSH_STATUS" -eq 0 ] || { rm -f "$RAW" "$TMP"; return; }
 
-		VALUE=$(printf '%s\n' "$STATS" |
-			sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' |
-			head -n1)
-		MITIGATION=$(printf '%s\n' "$STATS" |
-			sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
-			head -n1)
-		case "$VALUE" in ''|*[!0-9-]*) continue ;; esac
-		case "$MITIGATION" in ''|*[!0-9]*) MITIGATION=0 ;; esac
-		JSON="${JSON}${COMMA}\"${MAC}\":{\"temperature\":${VALUE},\"thermalMitigation\":${MITIGATION},\"ip\":\"${IP}\"}"
-		COMMA=,
+	STATS=$(cat "$RAW" 2>/dev/null)
+	rm -f "$RAW"
+	REMOTE_MAC=$(printf '%s\n' "$STATS" | sed -n 's/^__CLIENT_MAC__=//p' | head -n1)
+	[ "$REMOTE_MAC" = "$EXPECTED_MAC" ] || { rm -f "$TMP"; return; }
+
+	OLD_BOOT=$(sed -n '1p' "$CACHE" 2>/dev/null)
+	RECOVERY=$(sed -n '2p' "$CACHE" 2>/dev/null)
+	TEMPERATURE_VALUE=$(sed -n '3p' "$CACHE" 2>/dev/null)
+	MITIGATION=$(sed -n '4p' "$CACHE" 2>/dev/null)
+	BOOT_ID=$(printf '%s\n' "$STATS" | sed -n 's/^__BOOT_ID__=//p' | head -n1)
+	LINK_SECONDS=$(printf '%s\n' "$STATS" | sed -n 's/^__LINK_SECONDS__=//p' | head -n1 | cut -d. -f1)
+
+	if [ -n "$BOOT_ID" ] && [ "$BOOT_ID" != "$OLD_BOOT" ]; then
+		# Never report a previous boot's recovery time for a new boot. If the
+		# firmware log format cannot be parsed, expose null until the next sample.
+		RECOVERY=
+		case "$LINK_SECONDS" in ''|*[!0-9]*) ;; *) RECOVERY="$LINK_SECONDS" ;; esac
+	elif [ -z "$RECOVERY" ]; then
+		case "$LINK_SECONDS" in ''|*[!0-9]*) ;; *) RECOVERY="$LINK_SECONDS" ;; esac
+	fi
+
+	VALUE=$(printf '%s\n' "$STATS" | sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' | head -n1)
+	case "$VALUE" in ''|*[!0-9-]*) ;; *) TEMPERATURE_VALUE="$VALUE" ;; esac
+	VALUE=$(printf '%s\n' "$STATS" | sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)
+	case "$VALUE" in ''|*[!0-9]*) ;; *) MITIGATION="$VALUE" ;; esac
+	[ -n "$TEMPERATURE_VALUE" ] && [ -n "$MITIGATION" ] || MITIGATION=${MITIGATION:-0}
+
+	WIRED_MACS=
+	for WIRE in $(printf '%s\n' "$STATS" | sed -n 's/^__WIRED_MAC__=//p' | sort -u); do
+		valid_mac "$WIRE" || continue
+		[ "$WIRE" = "$EXPECTED_MAC" ] && continue
+		WIRED_MACS="${WIRED_MACS}${WIRED_MACS:+ }${WIRE}"
 	done
-	CLIENT_TEMPERATURES="${JSON}}"
-	CLIENT_RECOVERIES="${RECOVERY_JSON}}"
+
+	printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$BOOT_ID" "$RECOVERY" "$TEMPERATURE_VALUE" "$MITIGATION" "$IP" "$WIRED_MACS" > "$TMP"
+	mv "$TMP" "$CACHE"
 }
 
+sample_client_telemetry() {
+	local ASSOCIATED SECTION MAC IP CACHE PIDS PID
+	mkdir -p "$CLIENT_CACHE_DIR"
+	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
+	PIDS=
+	for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.remote_paired='1'$/\1/p"); do
+		MAC=$(uci -q get camera_network.$SECTION.mac | tr 'a-f' 'A-F')
+		IP=$(resolve_client_ip "$MAC" "$(uci -q get camera_network.$SECTION.last_ip)")
+		valid_mac "$MAC" && valid_ip "$IP" || continue
+		printf '%s\n' "$ASSOCIATED" | grep -qF "$MAC" || continue
+		CACHE=$(cache_file_for_mac "$MAC")
+		collect_one_client "$MAC" "$IP" "$CACHE" &
+		PIDS="$PIDS $!"
+	done
+	# All SSH probes started before any wait, so one slow Client cannot delay
+	# collection from the other Clients. Each probe has its own 5-second guard.
+	for PID in $PIDS; do
+		wait "$PID" 2>/dev/null
+	done
+}
+
+build_client_json() {
+	local ASSOCIATED SECTION MAC IP CACHE ONLINE TEMP MITIGATION RECOVERY WIRED_MACS WIRE
+	local TEMP_JSON TEMP_COMMA RECOVERY_JSON RECOVERY_COMMA TELEMETRY_JSON TELEMETRY_COMMA WIRED_JSON WIRED_COMMA
+	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
+	TEMP_JSON='{'; TEMP_COMMA=
+	RECOVERY_JSON='{'; RECOVERY_COMMA=
+	TELEMETRY_JSON='{'; TELEMETRY_COMMA=
+	for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.remote_paired='1'$/\1/p"); do
+		MAC=$(uci -q get camera_network.$SECTION.mac | tr 'a-f' 'A-F')
+		IP=$(resolve_client_ip "$MAC" "$(uci -q get camera_network.$SECTION.last_ip)")
+		valid_mac "$MAC" || continue
+		valid_ip "$IP" || IP=
+		ONLINE=false
+		printf '%s\n' "$ASSOCIATED" | grep -qF "$MAC" && ONLINE=true
+		CACHE=$(cache_file_for_mac "$MAC")
+		TEMP=$(sed -n '3p' "$CACHE" 2>/dev/null)
+		MITIGATION=$(sed -n '4p' "$CACHE" 2>/dev/null)
+		RECOVERY=$(sed -n '2p' "$CACHE" 2>/dev/null)
+		WIRED_MACS=$(sed -n '6p' "$CACHE" 2>/dev/null)
+		case "$TEMP" in ''|*[!0-9-]*) TEMP_JSON_VALUE=null ;; *) TEMP_JSON_VALUE="$TEMP" ;; esac
+		case "$MITIGATION" in ''|*[!0-9]*) MITIGATION_JSON_VALUE=null ;; *) MITIGATION_JSON_VALUE="$MITIGATION" ;; esac
+		case "$RECOVERY" in ''|*[!0-9]*) RECOVERY_JSON_VALUE=null ;; *) RECOVERY_JSON_VALUE="$RECOVERY" ;; esac
+
+		if [ "$TEMP_JSON_VALUE" != null ]; then
+			TEMP_JSON="${TEMP_JSON}${TEMP_COMMA}\"${MAC}\":{\"temperature\":${TEMP_JSON_VALUE},\"thermalMitigation\":${MITIGATION_JSON_VALUE},\"ip\":\"${IP}\"}"
+			TEMP_COMMA=,
+		fi
+		if [ "$RECOVERY_JSON_VALUE" != null ]; then
+			RECOVERY_JSON="${RECOVERY_JSON}${RECOVERY_COMMA}\"${MAC}\":${RECOVERY_JSON_VALUE}"
+			RECOVERY_COMMA=,
+		fi
+
+		WIRED_JSON='['; WIRED_COMMA=
+		for WIRE in $WIRED_MACS; do
+			valid_mac "$WIRE" || continue
+			WIRED_JSON="${WIRED_JSON}${WIRED_COMMA}\"${WIRE}\""
+			WIRED_COMMA=,
+		done
+		WIRED_JSON="${WIRED_JSON}]"
+		TELEMETRY_JSON="${TELEMETRY_JSON}${TELEMETRY_COMMA}\"${MAC}\":{\"ip\":\"${IP}\",\"online\":${ONLINE},\"temperature\":${TEMP_JSON_VALUE},\"thermalMitigation\":${MITIGATION_JSON_VALUE},\"recovery\":${RECOVERY_JSON_VALUE},\"wiredMacs\":${WIRED_JSON}}"
+		TELEMETRY_COMMA=,
+	done
+	CLIENT_TEMPERATURES="${TEMP_JSON}}"
+	CLIENT_RECOVERIES="${RECOVERY_JSON}}"
+	CLIENT_TELEMETRY="${TELEMETRY_JSON}}"
+}
+
+stop_sampling() {
+	[ -n "$CLIENT_SAMPLE_PID" ] && kill "$CLIENT_SAMPLE_PID" 2>/dev/null
+}
+shutdown_monitor() {
+	stop_sampling
+	trap - INT TERM EXIT
+	exit 0
+}
+trap shutdown_monitor INT TERM
+trap stop_sampling EXIT
+
+mkdir -p "$CLIENT_CACHE_DIR"
 while true; do
 	NOW=$(uptime_seconds)
 	if [ $((NOW - LAST_TEMP_SAMPLE)) -ge 5 ]; then
 		STATS=$(/sbin/morse_cli -i wlan0 stats -u -p 2>/dev/null)
-		VALUE=$(printf '%s\n' "$STATS" |
-			sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' |
-			head -n1)
-		MITIGATION=$(printf '%s\n' "$STATS" |
-			sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
-			head -n1)
-		case "$VALUE" in
-			''|*[!0-9-]*) ;;
-			*) TEMPERATURE=$VALUE ;;
-		esac
-		case "$MITIGATION" in
-			''|*[!0-9]*) ;;
-			*) THERMAL_MITIGATION=$MITIGATION ;;
-		esac
+		VALUE=$(printf '%s\n' "$STATS" | sed -n 's/.*"Temperature (C)"[[:space:]]*:[[:space:]]*\([-0-9][0-9]*\).*/\1/p' | head -n1)
+		MITIGATION=$(printf '%s\n' "$STATS" | sed -n 's/.*"TX Thermal mitigation applied count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)
+		case "$VALUE" in ''|*[!0-9-]*) ;; *) TEMPERATURE=$VALUE ;; esac
+		case "$MITIGATION" in ''|*[!0-9]*) ;; *) THERMAL_MITIGATION=$MITIGATION ;; esac
 		LAST_TEMP_SAMPLE=$NOW
 	fi
-	if [ $((NOW - LAST_CLIENT_TEMP_SAMPLE)) -ge 10 ]; then
-		sample_client_temperatures
+	if [ -n "$CLIENT_SAMPLE_PID" ] && ! kill -0 "$CLIENT_SAMPLE_PID" 2>/dev/null; then
+		wait "$CLIENT_SAMPLE_PID" 2>/dev/null
+		CLIENT_SAMPLE_PID=
+	fi
+	if [ $((NOW - LAST_CLIENT_TEMP_SAMPLE)) -ge 10 ] && [ -z "$CLIENT_SAMPLE_PID" ]; then
+		sample_client_telemetry &
+		CLIENT_SAMPLE_PID=$!
 		LAST_CLIENT_TEMP_SAMPLE=$NOW
 	fi
+	build_client_json
 	if [ -z "$CLIENT_READY" ] && iwinfo wlan0 assoclist 2>/dev/null | grep -qE '([0-9A-F]{2}:){5}[0-9A-F]{2}'; then
 		CLIENT_READY=$NOW
 	fi
@@ -103,8 +253,8 @@ while true; do
 		for SECTION in $(uci -q show camera_network | sed -n "s/^camera_network\.\([^.=]*\)\.pinned='1'$/\1/p"); do
 			MAC=$(uci -q get camera_network.$SECTION.mac | tr 'A-F' 'a-f')
 			[ -n "$MAC" ] || continue
-			echo "$ASSOCIATED" | grep -q "$MAC" && continue
-			if /usr/sbin/brctl showmacs br-lan 2>/dev/null | tr 'A-F' 'a-f' | grep -q "$MAC"; then
+			printf '%s\n' "$ASSOCIATED" | grep -qF "$MAC" && continue
+			if /usr/sbin/brctl showmacs br-lan 2>/dev/null | tr 'A-F' 'a-f' | grep -qF "$MAC"; then
 				CAMERA_READY=$NOW
 				break
 			fi

@@ -40,13 +40,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.1.8-1_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-4_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.1.8-1_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-4_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -70,6 +70,11 @@ management interface for that pairing request, then discarded. It is not
 written to UCI, files, logs, backups, or this repository. Later temperature and
 light-control operations use key authentication.
 
+After pairing, the AP reads each Client's local bridge table to identify the
+camera connected to that Client's wired port. This avoids guessing from the
+AP-side wireless bridge, where several Clients share the same port. A manual
+selection remains available and each camera can belong to only one Client.
+
 ## Build the IPK
 
 On macOS or Linux:
@@ -81,6 +86,18 @@ On macOS or Linux:
 The output is written to `outputs/`. The build uses the gzip-compressed outer
 tar format expected by OpenWrt 23.05; Debian-style `ar` packages are not
 accepted by the HaLowLink 2 firmware.
+
+Run all syntax, metadata, archive-layout, cache-version, and secret checks with:
+
+```sh
+./scripts/check.sh
+```
+
+`packaging/control` is the only package-version source. To publish a release,
+update its `Version` field, run `./scripts/check.sh`, then run
+`./scripts/build-ipk.sh`. Create a matching Git tag and GitHub Release, and
+attach the generated IPK from `outputs/`. Do not publish device backups,
+configuration exports, passwords, or SSH keys.
 
 ## Source layout
 

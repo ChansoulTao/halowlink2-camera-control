@@ -1,8 +1,8 @@
 Package: luci-app-camera-network
-Version: 1.1.8-1
+Version: 1.2.0-4
 Architecture: all
 Maintainer: Camera Network Project
-Depends: luci-base, rpcd, iwinfo, busybox
+Depends: luci-base, rpcd, iwinfo, busybox, uclient-fetch, jsonfilter, dropbear
 Section: luci
 Priority: optional
 Description: HaLow AP and client camera dashboard with LED control, remote telemetry, signal history and device discovery.

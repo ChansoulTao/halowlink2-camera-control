@@ -1,22 +1,54 @@
 #!/bin/sh
 
-[ -n "$IPKG_INSTROOT" ] && exit 0
+set -eu
+
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+
 chmod 0755 /usr/sbin/camera-network-monitor \
 	/usr/sbin/camera-network-leds \
 	/usr/sbin/camera-network-client-leds \
 	/usr/sbin/camera-network-pair-client \
-	/etc/init.d/camera-network-monitor 2>/dev/null
-[ -f /usr/share/camera-network/index.html ] && \
-	cp /usr/share/camera-network/index.html /www/index.html
+	/etc/init.d/camera-network-monitor
+
+test -f /usr/share/camera-network/index.html
+cp /usr/share/camera-network/index.html /www/index.html
+
+# Remove cache-busting view files left by releases that predate opkg ownership
+# tracking for those generated names. Keep only the view referenced by the
+# currently installed menu.
+menu_file=/usr/share/luci/menu.d/luci-app-camera-network.json
+current_view="$(sed -n 's#.*"path": "camera-network/\([^"]*\)".*#\1#p' "$menu_file" | head -n1)"
+if [ -n "$current_view" ]; then
+	for stale_view in /www/luci-static/resources/view/camera-network/index-v*.js; do
+		[ -e "$stale_view" ] || continue
+		[ "$stale_view" = "/www/luci-static/resources/view/camera-network/${current_view}.js" ] || rm -f "$stale_view"
+	done
+fi
+
 /etc/init.d/camera-network-monitor enable
-/etc/init.d/camera-network-monitor restart
-/usr/sbin/camera-network-leds apply >/dev/null 2>&1
-if [ "$(uci -q get wireless.default_radio1.mode)" = "sta" ]; then
+if /etc/init.d/camera-network-monitor running; then
+	/etc/init.d/camera-network-monitor restart
+else
+	/etc/init.d/camera-network-monitor start
+fi
+
+# Some firmware revisions expose different LED nodes. Keep installation
+# usable while reporting that optional hardware-specific initialization failed.
+if ! /usr/sbin/camera-network-leds apply >/dev/null 2>&1; then
+	echo "camera-network: warning: unable to apply the saved LED state" >&2
+fi
+
+wireless_mode="$(uci -q get wireless.default_radio1.mode 2>/dev/null || true)"
+if [ "$wireless_mode" = "sta" ]; then
 	uci -q set dropbear.@dropbear[0].enable='1'
 	uci -q commit dropbear
 	/etc/init.d/dropbear enable
 	/etc/init.d/dropbear restart
 fi
-rm -f /tmp/luci-indexcache
+# Current LuCI releases suffix the dispatcher cache with a content hash. Clear
+# both the legacy path and hashed variants so a newly versioned view is used
+# immediately after an upgrade.
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
 /etc/init.d/rpcd restart
+
 exit 0

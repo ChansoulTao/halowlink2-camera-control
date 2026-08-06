@@ -24,6 +24,7 @@ const apKnownPeers = new Map();
 const apOutages = new Map();
 const dismissedAlerts = new Set();
 const MAX_SIGNAL_SAMPLES = 150;
+const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 const deviceView = { query: '', filter: 'pinned' };
 
 const dashboardStyles = `
@@ -81,7 +82,7 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-temperature-value.warm { color:#fbbf24; }
 .camera-dashboard .camera-temperature-value.hot { color:#f87171; }
 .camera-dashboard .camera-temperature-meta { color:var(--camera-slate);font-size:.82rem;text-align:right; }
-.camera-dashboard .camera-status-strip { display:grid;grid-template-columns:minmax(220px,.75fr) minmax(250px,.85fr) minmax(360px,1.4fr);gap:.65rem;margin-bottom:1rem; }
+.camera-dashboard .camera-status-strip { display:grid;grid-template-columns:minmax(275px,.82fr) minmax(250px,.85fr) minmax(360px,1.33fr);gap:.65rem;margin-bottom:1rem; }
 .camera-dashboard .camera-status-strip-client { grid-template-columns:repeat(2,minmax(240px,1fr)); }
 .camera-dashboard .camera-status-strip > .cbi-section { min-height:70px;margin:0 !important;padding:.55rem .75rem !important;border-radius:9px;box-shadow:none; }
 .camera-dashboard .camera-status-strip .camera-led-control small,
@@ -227,14 +228,18 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-alert-message { min-width:0;flex:1; }
 .camera-dashboard .camera-alert-close { appearance:none;border:0;background:rgba(255,255,255,.1);color:currentColor;width:32px;height:32px;flex:0 0 32px;border-radius:50%;font-size:1.2rem;line-height:1;cursor:pointer; }
 .camera-dashboard .camera-alert-close:hover { background:rgba(255,255,255,.2); }
-.camera-dashboard canvas.camera-chart {
-	display:block;
-	width:100% !important;
-	max-width:100%;
-	height:auto !important;
-	min-height:0 !important;
-	aspect-ratio:10 / 3;
-}
+	.camera-dashboard canvas.camera-chart {
+		display:block;
+		box-sizing:content-box;
+		width:100% !important;
+		max-width:100%;
+		height:auto !important;
+		min-height:0 !important;
+		max-height:none !important;
+	}
+	/* These ratios exactly match each canvas' logical drawing coordinates. */
+	.camera-dashboard canvas.camera-chart-ap { aspect-ratio:600 / 180; }
+	.camera-dashboard canvas.camera-chart-client { aspect-ratio:600 / 165; }
 .camera-dashboard .camera-device-details { position: relative; }
 .camera-dashboard .camera-device-details summary {
 	cursor: pointer;
@@ -504,6 +509,11 @@ function cameraSection(mac) {
 	return `cam_${String(mac || '').replace(/[^A-Fa-f0-9]/g, '').toLowerCase()}`;
 }
 
+function normalizeMac(mac) {
+	const compact = String(mac || '').replace(/[^A-Fa-f0-9]/g, '').toUpperCase();
+	return compact.length === 12 ? compact.match(/.{2}/g).join(':') : String(mac || '').toUpperCase();
+}
+
 function cameraProfile(mac) {
 	const section = cameraSection(mac);
 	return {
@@ -518,27 +528,135 @@ function cameraProfile(mac) {
 	};
 }
 
-function automaticCameraForClient(clientMac, devices, bridgePorts) {
-	const clientProfile = cameraProfile(clientMac);
-	if (clientProfile.boundCameraMac)
-		return devices.find(device => device.mac === clientProfile.boundCameraMac) || null;
-	const clientPort = bridgePorts && bridgePorts.get(clientMac);
-	if (!clientPort)
-		return null;
-	const candidates = devices.filter(device => device.mac !== clientMac && cameraProfile(device.mac).pinned && bridgePorts.get(device.mac) === clientPort);
-	return candidates.length === 1 ? candidates[0] : null;
+function normalizedObjectMap(object) {
+	const result = new Map();
+	for (const [mac, value] of Object.entries(object || {})) {
+		const normalized = normalizeMac(mac);
+		if (normalized)
+			result.set(normalized, value || {});
+	}
+	return result;
 }
 
-function clientDisplayName(mac, fallbackToMac) {
-	const client = cameraProfile(mac);
-	if (client.boundCameraMac) {
-		const assigned = cameraProfile(client.boundCameraMac);
-		if (assigned.name && String(assigned.name).trim())
-			return String(assigned.name).trim();
+function telemetryWiredMacs(telemetry) {
+	const raw = telemetry && telemetry.wiredMacs;
+	const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[\s,]+/) : [];
+	return Array.from(new Set(values.map(normalizeMac).filter(mac => /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac))));
+}
+
+function cameraRecord(mac, devices) {
+	const normalized = normalizeMac(mac);
+	const live = (devices || []).find(device => normalizeMac(device.mac) === normalized);
+	if (live)
+		return { ...live, mac:normalized };
+	const profile = cameraProfile(normalized);
+	return { mac:normalized, ip:profile.lastIP || '', fallbackName:profile.name || '', online:false, current:false };
+}
+
+function buildClientIdentities(displayPeers, livePeers, devices, boot) {
+	const telemetryByMac = normalizedObjectMap(boot && boot.clientTelemetry);
+	const legacyTemperatures = normalizedObjectMap(boot && boot.clientTemperatures);
+	const legacyRecoveries = normalizedObjectMap(boot && boot.clientRecoveries);
+	const peerByMac = new Map();
+	const liveMacs = new Set();
+	const clientMacs = new Set(telemetryByMac.keys());
+	const deviceByMac = new Map((devices || []).map(device => [normalizeMac(device.mac), device]));
+
+	for (const peer of displayPeers || []) {
+		const mac = normalizeMac(peer.mac || peer.bssid);
+		if (!mac) continue;
+		clientMacs.add(mac);
+		peerByMac.set(mac, peer);
 	}
+	for (const peer of livePeers || []) {
+		const mac = normalizeMac(peer.mac || peer.bssid);
+		if (mac) liveMacs.add(mac);
+	}
+	for (const section of uci.sections('camera_network', 'camera') || []) {
+		const mac = normalizeMac(section.mac);
+		if (mac && (section.remote_paired === '1' || section.bound_camera_mac))
+			clientMacs.add(mac);
+	}
+
+	const pinnedByMac = new Map();
+	for (const section of uci.sections('camera_network', 'camera') || []) {
+		const mac = normalizeMac(section.mac);
+		if (mac && section.pinned === '1' && !clientMacs.has(mac))
+			pinnedByMac.set(mac, cameraRecord(mac, devices));
+	}
+
+	const cameraByClient = new Map();
+	const claimedCameras = new Map();
+	for (const clientMac of Array.from(clientMacs).sort()) {
+		const bound = normalizeMac(cameraProfile(clientMac).boundCameraMac);
+		if (!bound || !pinnedByMac.has(bound) || claimedCameras.has(bound))
+			continue;
+		cameraByClient.set(clientMac, pinnedByMac.get(bound));
+		claimedCameras.set(bound, clientMac);
+	}
+
+	const automaticClaims = new Map();
+	for (const clientMac of clientMacs) {
+		if (cameraByClient.has(clientMac)) continue;
+		const telemetry = telemetryByMac.get(clientMac) || {};
+		const candidates = telemetryWiredMacs(telemetry).filter(mac => pinnedByMac.has(mac) && !claimedCameras.has(mac));
+		if (candidates.length !== 1) continue;
+		const cameraMac = candidates[0];
+		if (!automaticClaims.has(cameraMac)) automaticClaims.set(cameraMac, []);
+		automaticClaims.get(cameraMac).push(clientMac);
+	}
+	for (const [cameraMac, clients] of automaticClaims.entries()) {
+		if (clients.length !== 1) continue;
+		cameraByClient.set(clients[0], pinnedByMac.get(cameraMac));
+		claimedCameras.set(cameraMac, clients[0]);
+	}
+
+	const identities = new Map();
+	for (const clientMac of clientMacs) {
+		const profile = cameraProfile(clientMac);
+		const telemetry = telemetryByMac.get(clientMac) || {};
+		const peer = peerByMac.get(clientMac) || null;
+		const currentDevice = deviceByMac.get(clientMac);
+		const camera = cameraByClient.get(clientMac) || null;
+		const cameraInfo = camera ? cameraProfile(camera.mac) : null;
+		const legacyTemperature = legacyTemperatures.get(clientMac) || {};
+		const legacyRecovery = legacyRecoveries.get(clientMac);
+		const recoveryValue = telemetry.recovery !== undefined ? telemetry.recovery
+			: legacyRecovery && typeof legacyRecovery === 'object' ? legacyRecovery.recovery
+			: legacyRecovery;
+		const name = cameraInfo && String(cameraInfo.name || '').trim()
+			? String(cameraInfo.name).trim()
+			: camera && String(camera.fallbackName || '').trim() ? String(camera.fallbackName).trim()
+			: String(profile.name || '').trim() || String(currentDevice && currentDevice.fallbackName || '').trim()
+				|| (_('Client %s').format(clientMac.slice(-8)));
+		identities.set(clientMac, {
+			mac:clientMac,
+			profile,
+			peer,
+			telemetry,
+			camera,
+			name,
+			ip:String((currentDevice && currentDevice.current && currentDevice.ip) || telemetry.ip || profile.lastIP || ''),
+			online:liveMacs.has(clientMac) || telemetry.online === true,
+			temperature:telemetry.temperature !== undefined ? telemetry.temperature : legacyTemperature.temperature,
+			thermalMitigation:telemetry.thermalMitigation !== undefined ? telemetry.thermalMitigation : legacyTemperature.thermalMitigation,
+			recovery:recoveryValue,
+			wiredMacs:telemetryWiredMacs(telemetry),
+			manual:Boolean(profile.boundCameraMac && camera && normalizeMac(profile.boundCameraMac) === camera.mac)
+		});
+	}
+	return identities;
+}
+
+function clientDisplayName(mac, fallbackToMac, identities) {
+	const normalized = normalizeMac(mac);
+	const identity = identities && identities.get(normalized);
+	if (identity)
+		return identity.name;
+	const client = cameraProfile(normalized);
 	if (client.name && String(client.name).trim())
 		return String(client.name).trim();
-	return fallbackToMac ? String(mac || '').slice(-8) : _('HaLow Client');
+	return fallbackToMac ? normalized.slice(-8) : _('HaLow Client');
 }
 
 function showCameraToast(message, error) {
@@ -552,19 +670,23 @@ function showCameraToast(message, error) {
 	window.setTimeout(() => toast.remove(), error ? 4500 : 2600);
 }
 
-function renderRemoteClientLEDSwitch(mac, online) {
+function renderRemoteClientLEDSwitch(identity) {
+	const mac = identity.mac;
 	const section = cameraSection(mac);
-	const profile = cameraProfile(mac);
+	const profile = identity.profile;
 	const enabled = profile.remoteLEDS;
-	const ip = profile.lastIP;
+	const ip = identity.ip;
 	if (!profile.remotePaired) {
 		const pair = E('button', { class:'cbi-button', click:async ev => {
 			const control=ev.currentTarget; let password=null; control.disabled=true;
 			try {
 				password = window.prompt(_('Enter the Client administrator password. It is used once for pairing and is not stored.'));
 				if (!password) return;
-				await fs.exec('/usr/sbin/camera-network-pair-client', [ip], { CAMERA_CLIENT_PASSWORD:password });
-				uci.set('camera_network', section, 'remote_paired', '1'); await uci.save(); await uci.apply(10);
+					await fs.exec('/usr/sbin/camera-network-pair-client', [ip], { CAMERA_CLIENT_PASSWORD:password });
+					if (!uci.get('camera_network', section)) uci.add('camera_network', 'camera', section);
+					uci.set('camera_network', section, 'mac', mac);
+					uci.set('camera_network', section, 'last_ip', ip);
+					uci.set('camera_network', section, 'remote_paired', '1'); await uci.save(); await uci.apply(10);
 				showCameraToast(_('Client paired — refreshing'));
 			} catch (error) { showCameraToast(_('Pairing failed — authorize this AP on the Client'), true); }
 			finally { password=null; control.disabled=!ip; }
@@ -582,8 +704,9 @@ function renderRemoteClientLEDSwitch(mac, online) {
 			const next = !cameraProfile(mac).remoteLEDS;
 			control.disabled = true;
 			try {
-				await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, next ? 'on' : 'off']);
-				uci.set('camera_network', section, 'remote_leds_enabled', next ? '1' : '0');
+					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, mac, next ? 'on' : 'off']);
+					uci.set('camera_network', section, 'remote_leds_enabled', next ? '1' : '0');
+					uci.set('camera_network', section, 'last_ip', ip);
 				await uci.save();
 				control.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 				control.setAttribute('aria-pressed', next ? 'true' : 'false');
@@ -608,7 +731,17 @@ function renderRemoteClientLEDSwitch(mac, online) {
 }
 
 async function bindCameraToClient(clientMac, cameraMac) {
+	clientMac = normalizeMac(clientMac);
+	cameraMac = normalizeMac(cameraMac);
 	const section = cameraSection(clientMac);
+	if (cameraMac) {
+		for (const other of uci.sections('camera_network', 'camera') || []) {
+			const otherMac = normalizeMac(other.mac);
+			if (!otherMac || otherMac === clientMac || normalizeMac(other.bound_camera_mac) !== cameraMac)
+				continue;
+			uci.set('camera_network', cameraSection(otherMac), 'bound_camera_mac', '');
+		}
+	}
 	if (!uci.get('camera_network', section)) uci.add('camera_network', 'camera', section);
 	uci.set('camera_network', section, 'mac', clientMac);
 	uci.set('camera_network', section, 'bound_camera_mac', cameraMac || '');
@@ -634,25 +767,26 @@ function discoveredDevices(leases, hints, selfIPs, bridgePorts) {
 		const ip = lease.ipaddr || hints.getIPAddrByMACAddr(mac);
 		if (!mac || selfIPs.has(ip)) continue;
 		seen.add(mac);
-		devices.push({ mac, ip, fallbackName: lease.hostname || hints.getHostnameByMACAddr(mac), source: _('DHCP lease'), online:true });
+		devices.push({ mac, ip, fallbackName: lease.hostname || hints.getHostnameByMACAddr(mac), source: _('DHCP lease'), online:Boolean(bridgePorts && bridgePorts.has(mac)), current:true });
 	}
 	for (const [macRaw, hint] of Object.entries(hints.hosts || {})) {
 		const mac = macRaw.toUpperCase();
 		const ip = (hint.ipaddrs || hint.ipv4 || [])[0];
 		if (seen.has(mac) || !ip || selfIPs.has(ip)) continue;
 		seen.add(mac);
-		devices.push({ mac, ip, fallbackName: hint.name, source: _('Network neighbor'), online:true });
+		devices.push({ mac, ip, fallbackName: hint.name, source: _('Network neighbor'), online:Boolean(bridgePorts && bridgePorts.has(mac)), current:true });
 	}
 	for (const section of uci.sections('camera_network', 'camera') || []) {
 		const mac = String(section.mac || '').toUpperCase();
 		const ip = section.last_ip || '';
 		if (!mac || !ip || seen.has(mac) || selfIPs.has(ip)) continue;
-		devices.push({ mac, ip, fallbackName: section.name, source: _('Saved static device'), online:bridgePorts ? bridgePorts.has(mac) : false });
+		devices.push({ mac, ip, fallbackName: section.name, source: _('Saved static device'), online:bridgePorts ? bridgePorts.has(mac) : false, current:false });
 	}
 	return devices;
 }
 
 async function toggleCameraPin(mac, ip) {
+	mac = normalizeMac(mac);
 	const section = cameraSection(mac);
 	const profile = cameraProfile(mac);
 	if (!uci.get('camera_network', section))
@@ -660,6 +794,13 @@ async function toggleCameraPin(mac, ip) {
 	uci.set('camera_network', section, 'mac', mac);
 	uci.set('camera_network', section, 'last_ip', ip);
 	uci.set('camera_network', section, 'pinned', profile.pinned ? '0' : '1');
+	if (profile.pinned) {
+		for (const client of uci.sections('camera_network', 'camera') || []) {
+			const clientMac = normalizeMac(client.mac);
+			if (clientMac && normalizeMac(client.bound_camera_mac) === mac)
+				uci.set('camera_network', cameraSection(clientMac), 'bound_camera_mac', '');
+		}
+	}
 	await uci.save();
 	await uci.apply(10);
 }
@@ -748,7 +889,7 @@ function renderSignalGauge(peer) {
 	]);
 }
 
-function renderHalowClients(peers, clientTemperatures, devices, bridgePorts) {
+function renderHalowClients(peers, identities) {
 	if (!peers.length)
 		return E('div', { class: 'cbi-section camera-device-section' }, [
 			E('h3', {}, _('HaLow clients')),
@@ -759,17 +900,15 @@ function renderHalowClients(peers, clientTemperatures, devices, bridgePorts) {
 			E('h3', {}, _('HaLow clients')),
 			E('strong', {}, _('%d connected').format(peers.filter(peer => peer._online !== false).length))
 		]),
-		E('div', { class: 'camera-client-grid' }, peers.map(peer => {
-			const mac = String(peer.mac || peer.bssid || '—').toUpperCase();
-			const profile = cameraProfile(mac);
-			const assignedCamera = automaticCameraForClient(mac, devices || [], bridgePorts);
-			const displayName = assignedCamera ? (cameraProfile(assignedCamera.mac).name || assignedCamera.fallbackName || _('Camera')) : clientDisplayName(mac, false);
-			const online = peer._online !== false;
-			const metrics = signalMetrics(online ? peer.signal : null, online ? peer.noise : null);
+			E('div', { class: 'camera-client-grid' }, peers.map(peer => {
+				const mac = normalizeMac(peer.mac || peer.bssid || '—');
+				const identity = identities.get(mac);
+				const displayName = identity ? identity.name : clientDisplayName(mac, false, identities);
+				const online = identity ? identity.online : peer._online !== false;
+				const metrics = signalMetrics(online ? peer.signal : null, online ? peer.noise : null);
 			const outages = apOutages.get(mac) || [];
 			const latestRecovery = outages.length ? outages[outages.length - 1].duration : null;
-			const thermal = clientTemperatures[mac] || {};
-			const temperature = Number(thermal.temperature);
+				const temperature = Number(identity && identity.temperature);
 			const hasTemperature = online && Number.isFinite(temperature);
 			const temperatureClass = temperature >= 85 ? ' hot' : temperature >= 75 ? ' warm' : '';
 			return E('div', { class: 'cbi-section camera-client-card', style:online ? '' : 'border-left-color:#d33b32 !important' }, [
@@ -799,21 +938,21 @@ function renderHalowClients(peers, clientTemperatures, devices, bridgePorts) {
 					E('div', {}, [E('small', {}, _('Dropouts')), E('strong', { style:'display:block' }, String(outages.length))]),
 					E('div', {}, [E('small', {}, _('Last recovery')), E('strong', { style:'display:block' }, latestRecovery === null ? '—' : formatDuration(latestRecovery / 1000))])
 				]),
-				renderRemoteClientLEDSwitch(mac, online)
+					renderRemoteClientLEDSwitch(identity || { mac, profile:cameraProfile(mac), ip:cameraProfile(mac).lastIP || '', online })
 			]);
 		}))
 	]);
 }
 
-function renderRemoteTemperatureAlert(clientTemperatures) {
+function renderRemoteTemperatureAlert(identities) {
 	const warnings = [];
 	let critical = false;
-	for (const [mac, thermal] of Object.entries(clientTemperatures || {})) {
-		const temperature = Number(thermal.temperature);
-		const mitigation = Number(thermal.thermalMitigation) || 0;
+	for (const [mac, identity] of identities.entries()) {
+		const temperature = Number(identity.temperature);
+		const mitigation = Number(identity.thermalMitigation) || 0;
 		if ((!Number.isFinite(temperature) || temperature < 75) && mitigation < 1)
 			continue;
-		const name = clientDisplayName(mac, true);
+		const name = clientDisplayName(mac, true, identities);
 		if (temperature >= 85) critical = true;
 		warnings.push(`${name}: ${Number.isFinite(temperature) ? `${temperature}°C` : _('temperature unavailable')}${mitigation > 0 ? ` · ${_('thermal protection')} ${mitigation}` : ''}`);
 	}
@@ -891,11 +1030,11 @@ function renderAPSummary(state) {
 	]);
 }
 
-function renderAPAlerts(peers) {
+function renderAPAlerts(peers, identities) {
 	const alerts = [];
 	for (const peer of peers || []) {
 		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
-		const name = clientDisplayName(mac, true);
+		const name = clientDisplayName(mac, true, identities);
 		const signal = Number(peer.signal), noise = Number(peer.noise);
 		const snr = Number.isFinite(signal) && Number.isFinite(noise) ? signal - noise : null;
 		const outages = apOutages.get(mac) || [];
@@ -907,17 +1046,22 @@ function renderAPAlerts(peers) {
 	}
 	for (const [mac, state] of apClientStates.entries()) {
 		if (!state.connected) {
-			alerts.push(`${clientDisplayName(mac, true)}: ${_('disconnected')}`);
+				alerts.push(`${clientDisplayName(mac, true, identities)}: ${_('disconnected')}`);
 		}
 	}
 	if (!alerts.length) { dismissedAlerts.delete('ap-network'); return E([]); }
 	return dismissibleAlert('ap-network', 'camera-alert-warning', `▲ ${alerts.join(' · ')}`);
 }
 
-function renderReadiness(peers, devices) {
-	const clientMacs = new Set((peers || []).map(peer => String(peer.mac || peer.bssid || '').toUpperCase()));
+function renderReadiness(peers, devices, identities) {
+	const clientMacs = new Set(identities.keys());
 	const saved = (uci.sections('camera_network', 'camera') || []).filter(section => section.pinned === '1' && !clientMacs.has(String(section.mac || '').toUpperCase()));
-	const visible = new Set(devices.filter(device => device.online).map(device => device.mac));
+	const visible = new Set(devices.filter(device => device.online).map(device => normalizeMac(device.mac)));
+	for (const identity of identities.values()) {
+		if (!identity.online) continue;
+		for (const mac of identity.wiredMacs)
+			visible.add(mac);
+	}
 	const missing = saved.filter(section => section.mac && !visible.has(String(section.mac).toUpperCase()));
 	const ready = peers.length > 0 && saved.length > 0 && missing.length === 0;
 	const clientText = peers.length === 1 ? _('1 HaLow client') : _('%d HaLow clients').format(peers.length);
@@ -932,54 +1076,60 @@ function renderReadiness(peers, devices) {
 	]);
 }
 
-function renderBootRecovery(boot, peers, devices, bridgePorts) {
-	const value = seconds => Number.isFinite(Number(seconds)) ? formatDuration(Number(seconds)) : _('Waiting…');
-	const recoveries = boot.clientRecoveries || {};
-	const clients = (peers || []).map(peer => {
-		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
-		const clientProfile = cameraProfile(mac);
-		const assigned = clientProfile.boundCameraMac
-			? { mac:clientProfile.boundCameraMac }
-			: automaticCameraForClient(mac, devices || [], bridgePorts);
-		const assignedProfile = assigned ? cameraProfile(assigned.mac) : null;
-		const name = assignedProfile && assignedProfile.name
-			? String(assignedProfile.name).trim()
-			: assigned && assigned.fallbackName ? assigned.fallbackName : clientDisplayName(mac, false);
-		return E('div', { class:'camera-boot-step' }, [
-			E('small', {}, name),
-			E('strong', { style:'display:block;font-size:1.25rem' }, value(recoveries[mac])),
-			E('small', { style:'display:block;opacity:.6;margin-top:.25rem' }, _('Power-on → AP connected'))
-		]);
-	});
+function renderBootRecovery(boot, identities) {
+	const value = seconds => seconds !== null && seconds !== undefined && seconds !== '' && Number.isFinite(Number(seconds))
+		? formatDuration(Number(seconds))
+		: _('Waiting…');
+	const clients = Array.from(identities.values())
+		.filter(identity => identity.profile.remotePaired || identity.peer || identity.telemetry.recovery !== undefined)
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map(identity => {
+			return E('div', { class:'camera-boot-step' }, [
+				E('small', {}, identity.name),
+				E('strong', { style:'display:block;font-size:1.25rem' }, value(identity.recovery)),
+				E('small', { style:'display:block;opacity:.6;margin-top:.25rem' }, identity.online ? _('Power-on → AP connected') : _('Last power-on → AP connected'))
+			]);
+		});
 	return E('div', { class:'cbi-section camera-device-section' }, [
 		E('h3', { class:'camera-boot-recovery-title' }, _('Power-on recovery — this boot')),
 		E('div', { class:'camera-boot-grid' }, [
 			E('div', { class:'camera-boot-step' }, [E('small', {}, _('AP monitor ready')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.ap))]),
-			...clients,
-			E('div', { class:'camera-boot-step' }, [E('small', {}, _('First pinned camera')), E('strong', { style:'display:block;font-size:1.25rem' }, value(boot.camera))])
+			...clients
 		]),
 		E('small', { class:'camera-boot-recovery-note', style:'opacity:.65;margin-top:.55rem' }, _('Each Client time is measured from its own last power-on until it connected to the AP. Recorded continuously even when this page is closed.'))
 	]);
 }
 
-function renderCameraAssignments(peers, devices, bridgePorts) {
-	const clientMacs = new Set((peers || []).map(peer => String(peer.mac || peer.bssid || '').toUpperCase()));
-	const pinned = devices.filter(device => cameraProfile(device.mac).pinned && !clientMacs.has(device.mac));
+function renderCameraAssignments(identities, devices) {
+	const clientMacs = new Set(identities.keys());
+	const pinnedByMac = new Map();
+	for (const section of uci.sections('camera_network', 'camera') || []) {
+		const mac = normalizeMac(section.mac);
+		if (mac && section.pinned === '1' && !clientMacs.has(mac))
+			pinnedByMac.set(mac, cameraRecord(mac, devices));
+	}
+	const pinned = Array.from(pinnedByMac.values());
+	const ownerByCamera = new Map();
+	for (const identity of identities.values())
+		if (identity.camera) ownerByCamera.set(identity.camera.mac, identity.mac);
+	const clients = Array.from(identities.values())
+		.filter(identity => identity.peer || identity.profile.remotePaired)
+		.sort((a, b) => a.name.localeCompare(b.name));
 	return E('div', { class:'cbi-section camera-device-section camera-config-only' }, [
 		E('div', { class:'camera-section-heading' }, [
 			E('h3', {}, _('Client → camera connections')),
-			E('small', { style:'display:block;opacity:.7;margin-top:.35rem' }, _('Pinned cameras on the same HaLow bridge port are matched automatically.'))
+		E('small', { style:'display:block;opacity:.7;margin-top:.35rem' }, _('Pinned cameras detected on each Client wired port are matched automatically.'))
 		]),
-		...(peers || []).map(peer => {
-			const clientMac = String(peer.mac || peer.bssid || '').toUpperCase();
-			const clientProfile = cameraProfile(clientMac);
-			const clientPort = bridgePorts.get(clientMac);
-			const automatic = pinned.filter(device => device.mac !== clientMac && clientPort && bridgePorts.get(device.mac) === clientPort);
-			const chosenMac = clientProfile.boundCameraMac || (automatic.length === 1 ? automatic[0].mac : '');
-			const chosen = devices.find(device => device.mac === chosenMac);
+		...(clients.length ? clients : [null]).map(identity => {
+			if (!identity)
+				return E('p', {}, E('em', {}, _('No Client available.')));
+			const clientMac = identity.mac;
+			const chosen = identity.camera;
+			const chosenMac = chosen ? chosen.mac : '';
+			const available = pinned.filter(device => !ownerByCamera.has(device.mac) || ownerByCamera.get(device.mac) === clientMac);
 			const select = E('select', { class:'cbi-input-select', value:chosenMac, change:ev => bindCameraToClient(clientMac, ev.currentTarget.value) }, [
-				E('option', { value:'' }, automatic.length > 1 ? _('Choose camera') : _('No camera detected')),
-				...pinned.filter(device => device.mac !== clientMac).map(device => {
+				E('option', { value:'' }, available.length ? _('Choose camera') : _('No camera available')),
+				...available.map(device => {
 					const profile = cameraProfile(device.mac);
 					const attrs = { value:device.mac };
 					if (chosenMac === device.mac) attrs.selected = true;
@@ -991,11 +1141,11 @@ function renderCameraAssignments(peers, devices, bridgePorts) {
 			if (chosenMac)
 				select.value = chosenMac;
 			return E('div', { class:'camera-assignment-row' }, [
-				E('div', {}, [E('strong', {}, chosen ? (cameraProfile(chosen.mac).name || chosen.fallbackName || _('Camera')) : clientProfile.name || _('HaLow Client')), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
+				E('div', {}, [E('strong', {}, identity.name), E('small', { class:'camera-client-mac', style:'display:block' }, clientMac)]),
 				E('div', {}, [
 					chosen ? E('div', { style:'font-weight:750;margin-bottom:.35rem' }, `→ ${cameraProfile(chosen.mac).name || chosen.fallbackName || _('Camera')} · ${chosen.ip || '—'}`) : '',
 					select,
-					E('small', { style:'display:block;opacity:.65;margin-top:.3rem' }, clientProfile.boundCameraMac ? _('Manual selection') : automatic.length === 1 ? _('Automatically detected') : _('Pin the camera below, then select it here.'))
+					E('small', { style:'display:block;opacity:.65;margin-top:.3rem' }, identity.manual ? _('Manual selection') : chosen ? _('Automatically detected from the Client wired port') : _('Pin the camera below, then select it here.'))
 				])
 			]);
 		})
@@ -1060,8 +1210,15 @@ function recordSignalSample(peer) {
 	if (!Number.isFinite(signal))
 		return;
 	signalSamples.push({ time: Date.now(), signal, snr: Number.isFinite(noise) ? signal - noise : null });
-	if (signalSamples.length > MAX_SIGNAL_SAMPLES)
-		signalSamples.splice(0, signalSamples.length - MAX_SIGNAL_SAMPLES);
+	pruneSignalSamples(signalSamples, Date.now());
+}
+
+function pruneSignalSamples(samples, now) {
+	const cutoff = now - SIGNAL_WINDOW_MS;
+	while (samples.length && Number(samples[0].time) < cutoff)
+		samples.shift();
+	if (samples.length > MAX_SIGNAL_SAMPLES)
+		samples.splice(0, samples.length - MAX_SIGNAL_SAMPLES);
 }
 
 function recordAPSignalSamples(peers) {
@@ -1075,8 +1232,7 @@ function recordAPSignalSamples(peers) {
 		if (!connected.has(mac)) {
 			const samples = apSignalSamples.get(mac) || [];
 			samples.push({ time: now, signal: null, snr: null });
-			if (samples.length > MAX_SIGNAL_SAMPLES)
-				samples.splice(0, samples.length - MAX_SIGNAL_SAMPLES);
+			pruneSignalSamples(samples, now);
 			apSignalSamples.set(mac, samples);
 		}
 	}
@@ -1086,30 +1242,37 @@ function recordAPSignalSamples(peers) {
 		const noise = Number(peer.noise);
 		if (!mac || !Number.isFinite(signal))
 			continue;
-		apKnownPeers.set(mac, { ...peer, _online:true });
+		apKnownPeers.set(mac, { ...peer, _online:true, _lastSeen:now });
 		const state = apClientStates.get(mac);
 		if (state && !state.connected && state.disconnectedAt) {
 			if (!apOutages.has(mac))
 				apOutages.set(mac, []);
 			apOutages.get(mac).push({ start: state.disconnectedAt, end: now, duration: now - state.disconnectedAt });
+			apOutages.set(mac, apOutages.get(mac).filter(outage => outage.end >= now - SIGNAL_WINDOW_MS));
 		}
 		apClientStates.set(mac, { connected: true, disconnectedAt: null });
 		if (!apSignalSamples.has(mac))
 			apSignalSamples.set(mac, []);
 		const samples = apSignalSamples.get(mac);
 		samples.push({ time: now, signal, snr: Number.isFinite(noise) ? signal - noise : null });
-		if (samples.length > MAX_SIGNAL_SAMPLES)
-			samples.splice(0, samples.length - MAX_SIGNAL_SAMPLES);
+		pruneSignalSamples(samples, now);
 	}
-	for (const [mac, peer] of apKnownPeers.entries())
-		if (!connected.has(mac))
+	for (const [mac, peer] of apKnownPeers.entries()) {
+		if (!connected.has(mac)) {
+			if (now - Number(peer._lastSeen || now) > SIGNAL_WINDOW_MS) {
+				apKnownPeers.delete(mac); apClientStates.delete(mac); apSignalSamples.delete(mac); apOutages.delete(mac);
+				continue;
+			}
 			apKnownPeers.set(mac, { ...peer, signal:null, noise:null, _online:false });
+		}
+	}
 }
 
 function APDisplayPeers(currentPeers) {
+	const now = Date.now();
 	for (const peer of currentPeers || []) {
-		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
-		if (mac) apKnownPeers.set(mac, { ...peer, _online:true });
+		const mac = normalizeMac(peer.mac || peer.bssid);
+		if (mac) apKnownPeers.set(mac, { ...peer, _online:true, _lastSeen:now });
 	}
 	return Array.from(apKnownPeers.values());
 }
@@ -1137,33 +1300,13 @@ function parseAPStationStates(text) {
 }
 
 async function filterLiveAPPeers(peers, stationStates) {
-	const checked = await Promise.all((peers || []).map(async peer => {
-		const inactive = Number(peer.inactive);
-		const mac = String(peer.mac || peer.bssid || '').toUpperCase();
-		const markOffline = () => {
-			apKnownPeers.set(mac, { ...peer, signal:null, noise:null, _online:false });
-			if (!apClientStates.has(mac))
-				apClientStates.set(mac, { connected:false, disconnectedAt:Date.now() });
-			return null;
-		};
-		if (stationStates.get(mac) === false)
-			return markOffline();
-		const managementIP = cameraProfile(mac).lastIP;
-		if (managementIP) try {
-			const probe = await promiseTimeout(fs.exec_direct('/bin/ping', ['-c', '1', '-W', '1', managementIP]), null, 1300);
-			// LuCI's CGI exec request may resolve successfully even when ping exits
-			// non-zero. Only an actual ICMP reply proves that the client is live.
-			const replied = typeof probe === 'string' && /(?:bytes from|1 packets received|1 received)/i.test(probe);
-			return replied ? peer : markOffline();
-		} catch (error) {
-			return markOffline();
-		}
-		if (stationStates.get(mac) === true || !Number.isFinite(inactive) || inactive < 5000)
-			return peer;
-		return markOffline();
-	}));
+	const checked = (peers || []).map(peer => {
+		// Presence in iwinfo's association list is the authoritative link state.
+		// An older hostapd disconnect line must not override a current peer.
+		return peer;
+	});
 	for (const [mac, online] of stationStates.entries()) {
-		if (!online && !(peers || []).some(peer => String(peer.mac || peer.bssid || '').toUpperCase() === mac)) {
+		if (!online && !(peers || []).some(peer => normalizeMac(peer.mac || peer.bssid) === mac)) {
 			const previous = apKnownPeers.get(mac) || { mac };
 			apKnownPeers.set(mac, { ...previous, signal:null, noise:null, _online:false });
 			if (!apClientStates.has(mac))
@@ -1226,9 +1369,9 @@ function drawAPChart(canvas) {
 	});
 }
 
-function renderAPSignalHistory(devices, bridgePorts) {
+function renderAPSignalHistory(identities) {
 	const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-	const canvas = E('canvas', { class: 'camera-chart', width: Math.round(600 * ratio), height: Math.round(180 * ratio), 'data-pixel-ratio': ratio });
+	const canvas = E('canvas', { class: 'camera-chart camera-chart-ap', width: Math.round(600 * ratio), height: Math.round(180 * ratio), 'data-pixel-ratio': ratio });
 	const entries = Array.from(apSignalSamples.entries());
 	const ready = entries.some(entry => entry[1].length >= 2);
 	if (ready)
@@ -1238,15 +1381,8 @@ function renderAPSignalHistory(devices, bridgePorts) {
 		E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
 			E('h3', {}, _('Client signal history — last 5 minutes')),
 			E('div', { style: 'display:flex;gap:.8rem;flex-wrap:wrap;font-size:.82rem;font-weight:700' }, entries.map((entry, index) => {
-				const clientMac = entry[0];
-				const clientProfile = cameraProfile(clientMac);
-				const assigned = clientProfile.boundCameraMac
-					? { mac:clientProfile.boundCameraMac }
-					: automaticCameraForClient(clientMac, devices || [], bridgePorts);
-				const assignedProfile = assigned ? cameraProfile(assigned.mac) : null;
-				const name = assignedProfile && assignedProfile.name
-					? String(assignedProfile.name).trim()
-					: assigned && assigned.fallbackName ? assigned.fallbackName : clientDisplayName(clientMac, true);
+					const clientMac = normalizeMac(entry[0]);
+					const name = clientDisplayName(clientMac, true, identities);
 				return E('span', { style: `color:${colors[index % colors.length]}` }, `● ${name}`);
 			}))
 		]),
@@ -1303,7 +1439,7 @@ function drawChart(canvas) {
 function renderSignalHistory() {
 	const pixelRatio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
 	const canvas = E('canvas', {
-		class: 'camera-chart',
+		class: 'camera-chart camera-chart-client',
 		width: Math.round(600 * pixelRatio),
 		height: Math.round(165 * pixelRatio),
 		'data-pixel-ratio': pixelRatio
@@ -1475,7 +1611,7 @@ function deviceDetails(mac, source) {
 	]);
 }
 
-function renderDeviceTable(leases, hints, selfIPs, bridgePorts) {
+function renderDeviceTable(leases, hints, selfIPs, bridgePorts, identities) {
 	const devices = discoveredDevices(leases, hints, selfIPs, bridgePorts);
 	const tableHost = E('div', { class: 'camera-device-card-grid' });
 	const renderRows = () => {
@@ -1488,7 +1624,8 @@ function renderDeviceTable(leases, hints, selfIPs, bridgePorts) {
 			.sort((a, b) => Number(b.profile.pinned) - Number(a.profile.pinned));
 		const cards = visible.map(device => {
 			const tested = latencyResults.get(device.ip);
-			const effectiveOnline = tested ? tested.text !== _('No reply') : device.online;
+			const clientIdentity = identities && identities.get(normalizeMac(device.mac));
+			const effectiveOnline = clientIdentity ? clientIdentity.online : (tested ? tested.text !== _('No reply') : device.online);
 			return E('div', { class:'cbi-section camera-device-card' }, [
 			E('div', { class:'camera-device-card-head' }, [
 				E('button', {
@@ -1606,14 +1743,15 @@ return view.extend({
 			const isAP = state.halow && state.halow.role === 'ap';
 			const displayPeers = isAP ? APDisplayPeers(state.halow.peers) : [];
 			const devices = discoveredDevices(state.leases, state.hints, state.selfIPs, state.bridgePorts);
+			const identities = isAP ? buildClientIdentities(displayPeers, state.halow.peers, devices, state.boot) : new Map();
 			if (isAP)
 				recordAPSignalSamples(state.halow.peers);
 			else
 				recordSignalSample(peer);
-			const linkAlert = isAP ? renderAPAlerts(state.halow.peers) : (renderLinkAlert(peer) || E([]));
+			const linkAlert = isAP ? renderAPAlerts(state.halow.peers, identities) : (renderLinkAlert(peer) || E([]));
 			const deviceAlert = renderDeviceAlert(state.leases, state.hints) || E([]);
 			const temperatureAlert = renderTemperatureAlert(state.boot.temperature, state.boot.thermalMitigation);
-			const remoteTemperatureAlert = isAP ? renderRemoteTemperatureAlert(state.boot.clientTemperatures) : E([]);
+			const remoteTemperatureAlert = isAP ? renderRemoteTemperatureAlert(identities) : E([]);
 			const uptime = Number(state.systemInfo && state.systemInfo.uptime) || 0;
 			const connectedTime = peer && Number(peer.connected_time);
 			const acquisitionTime = state.linkHistory.bootLinkSeconds !== null
@@ -1628,9 +1766,9 @@ return view.extend({
 			]);
 			const roleOverview = isAP
 				? E([], [
-						renderHalowClients(displayPeers, state.boot.clientTemperatures || {}, devices, state.bridgePorts),
-					renderAPSignalHistory(devices, state.bridgePorts),
-					renderCameraAssignments(state.halow.peers, devices, state.bridgePorts)
+						renderHalowClients(displayPeers, identities),
+					renderAPSignalHistory(identities),
+					renderCameraAssignments(identities, devices)
 				])
 				: E([], [
 					E('div', { class: 'camera-summary-grid' }, [
@@ -1654,7 +1792,8 @@ return view.extend({
 			const oldDeviceScroll = root.querySelector('.camera-table-scroll');
 			if (oldDeviceScroll)
 				deviceScrollLeft = oldDeviceScroll.scrollLeft;
-			const pageScrollY = window.scrollY;
+			const pageScroller = document.querySelector('.main-right');
+			const pageScrollY = pageScroller ? pageScroller.scrollTop : window.scrollY;
 			root.replaceChildren(
 				E('style', {}, dashboardStyles),
 				E('div', { class: 'camera-console-bar' }, [
@@ -1673,20 +1812,20 @@ return view.extend({
 						E('span', { class: 'camera-console-subtitle camera-live-label' }, _('Live'))
 					])
 				]),
-				isAP ? renderReadiness(state.halow.peers, devices) : E([]),
+			isAP ? renderReadiness(state.halow.peers, devices, identities) : E([]),
 				statusStrip,
 				temperatureAlert,
 				remoteTemperatureAlert,
 				linkAlert,
 				deviceAlert,
 				roleOverview,
-				isAP ? renderBootRecovery(state.boot, displayPeers, devices, state.bridgePorts) : E([]),
+				isAP ? renderBootRecovery(state.boot, identities) : E([]),
 				E('div', { class: 'cbi-section camera-device-section camera-config-only' }, [
 					E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
 						E('h3', {}, _('Discovered devices')),
 						E('small', { style: 'opacity:.7' }, `${_('Updated')} ${new Date().toLocaleTimeString()}`)
 					]),
-					renderDeviceTable(state.leases, state.hints, state.selfIPs, state.bridgePorts)
+					renderDeviceTable(state.leases, state.hints, state.selfIPs, state.bridgePorts, identities)
 				]),
 				isAP ? E([]) : E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
 					E('h3', {}, _('HaLow connection history — this boot')),
@@ -1698,7 +1837,11 @@ return view.extend({
 				const newDeviceScroll = root.querySelector('.camera-table-scroll');
 				if (newDeviceScroll)
 					newDeviceScroll.scrollLeft = deviceScrollLeft;
-				window.scrollTo(0, pageScrollY);
+				const newPageScroller = document.querySelector('.main-right');
+				if (newPageScroller)
+					newPageScroller.scrollTop = pageScrollY;
+				else
+					window.scrollTo(0, pageScrollY);
 			});
 		};
 
