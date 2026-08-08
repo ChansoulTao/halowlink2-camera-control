@@ -15,7 +15,7 @@ pages.
 - Camera and network-device discovery with custom names, pinning, filtering, and hiding
 - Automatic Client-to-camera association
 - Reachability and latency checks
-- AP and remote Client indicator-light controls
+- AP and remote Client indicator-light controls, including persistent Status LED restoration
 - One-click remote Client pairing from the AP dashboard; the Client password is used once and never stored
 - Responsive light/dark interface designed for iPad and phone use
 - Dismissible warnings for weak links, offline devices, and high temperatures
@@ -40,13 +40,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-4_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-5_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-4_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-5_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control

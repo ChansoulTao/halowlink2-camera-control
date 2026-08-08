@@ -6,6 +6,24 @@ mode="${1:-}"
 [ "$mode" = "0" ] && mode="off"
 [ -n "$mode" ] || mode="on"
 
+status_led=/sys/class/leds/rgb:led1
+
+restore_status_led() {
+	[ -d "$status_led" ] || return 0
+
+	# HaLowLink 2 uses rgb:led0 for Wi-Fi and rgb:led2 for HaLow. The remaining
+	# RGB channel is the Status indicator, which the vendor image does not add
+	# to /etc/config/system. Register it so /etc/init.d/led can restore it after
+	# a user turns indicators back on or after a reboot.
+	uci -q batch <<'EOF' || return 1
+set system.camera_network_status=led
+set system.camera_network_status.name='camera-network-status'
+set system.camera_network_status.sysfs='rgb:led1'
+set system.camera_network_status.trigger='default-on'
+commit system
+EOF
+}
+
 case "$mode" in
 	off)
 		uci -q batch <<'EOF' || exit 1
@@ -29,10 +47,16 @@ set camera_network.settings=led_control
 set camera_network.settings.leds_enabled='1'
 commit camera_network
 EOF
+		restore_status_led || exit 1
 		[ -x /etc/init.d/led ] || exit 1
 		# Let the firmware restore every configured trigger and brightness. Do not
-		# force an individual LED to a solid state here.
+		# force Wi-Fi or HaLow to a solid state here. Status is intentionally a
+		# steady power/health indicator.
 		/etc/init.d/led restart >/dev/null 2>&1 || exit 1
+		if [ -d "$status_led" ]; then
+			printf 'default-on\n' > "$status_led/trigger" || exit 1
+			printf '255\n' > "$status_led/brightness" || exit 1
+		fi
 		;;
 	*) exit 1 ;;
 esac
