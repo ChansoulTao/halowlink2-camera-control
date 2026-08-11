@@ -1,0 +1,8 @@
+{
+  "name": "halowlink2-camera-control-preview",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs"
+  }
+}

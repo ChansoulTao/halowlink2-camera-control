@@ -10,6 +10,7 @@ pages.
 ## Features
 
 - Live HaLow client signal strength, SNR, connection state, and five-minute history
+- Signal-first AP operations board with Camera-named Client links and per-Client recovery timing
 - Dropout and reconnection-time tracking
 - AP and remote Client chip-temperature monitoring
 - Camera and network-device discovery with custom names, pinning, filtering, and hiding
@@ -40,13 +41,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-5_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-6_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-5_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-6_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -61,7 +62,7 @@ additional details.
    Client/Extender mode and join the AP's HaLow SSID.
 2. Install the same Camera Network IPK on the Client. This enables SSH and
    installs the local light-control helper.
-3. Open Camera Network on the AP. In the detected Client card, click **Pair**.
+3. Open Camera Network on the AP. In the Client's **Live Link Status** row, click **Pair** in the Lights column.
 4. Enter the Client administrator password once.
 
 The AP creates its own Ed25519 key and authorizes only the public key on the
@@ -93,6 +94,17 @@ Run all syntax, metadata, archive-layout, cache-version, and secret checks with:
 ./scripts/check.sh
 ```
 
+To preview the real LuCI view locally with representative AP, Client, Camera,
+telemetry, and recovery data:
+
+```sh
+cd tools/preview
+npm run dev -- --host 127.0.0.1 --port 4173
+```
+
+Open `http://127.0.0.1:4173/`. The preview evaluates the maintained production
+`index.js`; it does not maintain a second copy of the dashboard.
+
 `packaging/control` is the only package-version source. To publish a release,
 update its `Version` field, run `./scripts/check.sh`, then run
 `./scripts/build-ipk.sh`. Create a matching Git tag and GitHub Release, and
@@ -103,6 +115,10 @@ configuration exports, passwords, or SSH keys.
 
 - `work/camera-network/root/` — files installed on the OpenWrt device
 - `outputs/` — ready-to-install package and documentation
+- `tools/preview/` — local, production-source LuCI preview harness
+
+Dashboard icons are from [Iconoir](https://iconoir.com/) under the MIT License;
+the bundled license is installed alongside the icon assets.
 
 Device backups, private configuration, credentials, and SSH keys are not part
 of this repository.
