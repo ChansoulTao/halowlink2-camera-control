@@ -1,0 +1,460 @@
+#!/bin/sh
+
+# Manage the four camera-position DHCP reservations owned by Camera Network.
+# Camera profiles remain MAC identities in /etc/config/camera_network; these
+# A-D slots are deliberately separate so a replacement camera can take over a
+# position and its stable address without inheriting the previous profile.
+
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+DHCP_CONFIG=/etc/config/dhcp
+CAMERA_CONFIG=/etc/config/camera_network
+DNSMASQ_INIT=/etc/init.d/dnsmasq
+LOCK_DIR=/var/lock/camera-network-static-ip.lock
+LEASE_FILE_DEFAULT=/tmp/dhcp.leases
+LOCKED=0
+BACKUP_DIR=
+
+usage() {
+	cat >&2 <<'EOF'
+Usage:
+  camera-network-static-ip query [A|B|C|D]
+  camera-network-static-ip apply A|B|C|D MAC
+  camera-network-static-ip clear A|B|C|D
+EOF
+	exit 2
+}
+
+die() {
+	printf '%s\n' "$*" >&2
+	exit 1
+}
+
+slot_lower() {
+	case "$(printf '%s' "$1" | tr 'a-d' 'A-D')" in
+		A) printf 'a\n' ;;
+		B) printf 'b\n' ;;
+		C) printf 'c\n' ;;
+		D) printf 'd\n' ;;
+		*) return 1 ;;
+	esac
+}
+
+slot_upper() {
+	case "$(slot_lower "$1" 2>/dev/null || true)" in
+		a) printf 'A\n' ;;
+		b) printf 'B\n' ;;
+		c) printf 'C\n' ;;
+		d) printf 'D\n' ;;
+		*) return 1 ;;
+	esac
+}
+
+default_ip_for_slot() {
+	case "$(slot_upper "$1" 2>/dev/null || true)" in
+		A) printf '192.168.12.50\n' ;;
+		B) printf '192.168.12.51\n' ;;
+		C) printf '192.168.12.52\n' ;;
+		D) printf '192.168.12.53\n' ;;
+		*) return 1 ;;
+	esac
+}
+
+section_for_slot() {
+	printf 'camera_network_slot_%s\n' "$(slot_lower "$1")"
+}
+
+normalize_mac() {
+	printf '%s' "$1" | tr 'a-f-' 'A-F:'
+}
+
+valid_mac() {
+	local MAC FIRST
+	MAC=$(normalize_mac "$1")
+	printf '%s\n' "$MAC" | grep -qE '^([0-9A-F]{2}:){5}[0-9A-F]{2}$' || return 1
+	[ "$MAC" != '00:00:00:00:00:00' ] || return 1
+	[ "$MAC" != 'FF:FF:FF:FF:FF:FF' ] || return 1
+	FIRST=${MAC%%:*}
+	[ $((0x$FIRST & 1)) -eq 0 ]
+}
+
+valid_ip() {
+	case "$1" in ''|*[!0-9.]*) return 1 ;; esac
+	[ "$(printf '%s\n' "$1" | awk -F. '
+		NF == 4 {
+			for (i = 1; i <= 4; i++)
+				if ($i !~ /^[0-9]+$/ || $i > 255)
+					exit
+			if ($1 == 0 || $1 == 127 || $1 >= 224 || $4 == 0 || $4 == 255)
+				exit
+			print "valid"
+		}')" = valid ]
+}
+
+managed_slot_for_section() {
+	local SECTION EXPECTED MARKER
+	SECTION=$1
+	case "$SECTION" in
+		camera_network_slot_a) EXPECTED=A ;;
+		camera_network_slot_b) EXPECTED=B ;;
+		camera_network_slot_c) EXPECTED=C ;;
+		camera_network_slot_d) EXPECTED=D ;;
+		*) return 1 ;;
+	esac
+	MARKER=$(uci -q get "dhcp.$SECTION.camera_network_slot" 2>/dev/null || true)
+	[ "$MARKER" = "$EXPECTED" ] || return 1
+	printf '%s\n' "$EXPECTED"
+}
+
+option_contains_mac() {
+	local WANTED VALUE ITEM
+	WANTED=$(normalize_mac "$1")
+	VALUE=$(uci -q get "dhcp.$2.mac" 2>/dev/null || true)
+	for ITEM in $(printf '%s' "$VALUE" | tr ',\t' '  '); do
+		[ "$(normalize_mac "$ITEM")" = "$WANTED" ] && return 0
+	done
+	return 1
+}
+
+option_contains_ip() {
+	local WANTED VALUE ITEM
+	WANTED=$1
+	VALUE=$(uci -q get "dhcp.$2.ip" 2>/dev/null || true)
+	for ITEM in $(printf '%s' "$VALUE" | tr ',\t' '  '); do
+		[ "$ITEM" = "$WANTED" ] && return 0
+	done
+	return 1
+}
+
+ip_is_router_address() {
+	local WANTED VALUE
+	WANTED=$1
+	for VALUE in $(uci -q show network 2>/dev/null | sed -n "s/^[^=]*\.ipaddr='\([^']*\)'$/\1/p"); do
+		[ "$VALUE" = "$WANTED" ] && return 0
+	done
+	return 1
+}
+
+lease_file() {
+	local FILE
+	FILE=$(uci -q get 'dhcp.@dnsmasq[0].leasefile' 2>/dev/null || true)
+	printf '%s\n' "${FILE:-$LEASE_FILE_DEFAULT}"
+}
+
+active_lease_mac_for_ip() {
+	local FILE NOW
+	FILE=$(lease_file)
+	[ -r "$FILE" ] || return 1
+	NOW=$(date +%s)
+	awk -v wanted="$1" -v now="$NOW" '
+		NF >= 3 && $3 == wanted && ($1 == 0 || $1 > now) {
+			print toupper($2)
+			exit
+		}
+	' "$FILE"
+}
+
+active_lease_ip_for_mac() {
+	local FILE NOW WANTED
+	FILE=$(lease_file)
+	[ -r "$FILE" ] || return 1
+	NOW=$(date +%s)
+	WANTED=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+	awk -v wanted="$WANTED" -v now="$NOW" '
+		NF >= 3 && tolower($2) == wanted && ($1 == 0 || $1 > now) {
+			print $3
+			exit
+		}
+	' "$FILE"
+}
+
+acquire_lock() {
+	local ATTEMPTS OWNER
+	ATTEMPTS=0
+	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+		OWNER=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+		case "$OWNER" in
+			''|*[!0-9]*)
+				# Give a just-created lock one pass to write its owner. On the
+				# next pass an ownerless directory is safe to treat as stale.
+				if [ "$ATTEMPTS" -gt 0 ]; then
+					rm -f "$LOCK_DIR/pid"
+					rmdir "$LOCK_DIR" 2>/dev/null && continue
+				fi
+				;;
+			*)
+				if ! kill -0 "$OWNER" 2>/dev/null; then
+					rm -f "$LOCK_DIR/pid"
+					rmdir "$LOCK_DIR" 2>/dev/null || true
+					continue
+				fi
+				;;
+		esac
+		ATTEMPTS=$((ATTEMPTS + 1))
+		[ "$ATTEMPTS" -lt 10 ] || die 'Another camera IP update is already running'
+		sleep 1
+	done
+	printf '%s\n' "$$" > "$LOCK_DIR/pid"
+	LOCKED=1
+}
+
+cleanup() {
+	[ -z "$BACKUP_DIR" ] || rm -f "$BACKUP_DIR/dhcp" "$BACKUP_DIR/camera_network"
+	[ -z "$BACKUP_DIR" ] || rmdir "$BACKUP_DIR" 2>/dev/null || true
+	if [ "$LOCKED" -eq 1 ]; then
+		rm -f "$LOCK_DIR/pid"
+		rmdir "$LOCK_DIR" 2>/dev/null || true
+	fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+backup_state() {
+	BACKUP_DIR=$(mktemp -d /tmp/camera-network-static-ip.XXXXXX)
+	cp -p "$DHCP_CONFIG" "$BACKUP_DIR/dhcp"
+	cp -p "$CAMERA_CONFIG" "$BACKUP_DIR/camera_network"
+}
+
+restore_state() {
+	[ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/dhcp" ] || return 1
+	cp -p "$BACKUP_DIR/dhcp" "$DHCP_CONFIG"
+	cp -p "$BACKUP_DIR/camera_network" "$CAMERA_CONFIG"
+	uci -q revert dhcp >/dev/null 2>&1 || true
+	uci -q revert camera_network >/dev/null 2>&1 || true
+}
+
+reload_dnsmasq() {
+	[ -x "$DNSMASQ_INIT" ] || return 1
+	"$DNSMASQ_INIT" reload >/dev/null 2>&1 || "$DNSMASQ_INIT" restart >/dev/null 2>&1
+}
+
+query_slot() {
+	local SLOT SECTION CONFIG_SECTION DEFAULT_IP TYPE MARKER MAC IP ASSIGNED
+	local CONFIG_TYPE CONFIG_SLOT CONFIG_MAC CONFIG_IP LIVE_IP FIXED_LIVE_MAC PENDING CONSISTENT
+	SLOT=$(slot_upper "$1") || usage
+	SECTION=$(section_for_slot "$SLOT")
+	CONFIG_SECTION="slot_$(slot_lower "$SLOT")"
+	DEFAULT_IP=$(default_ip_for_slot "$SLOT")
+	TYPE=$(uci -q get "dhcp.$SECTION" 2>/dev/null || true)
+	MARKER=$(uci -q get "dhcp.$SECTION.camera_network_slot" 2>/dev/null || true)
+	MAC=$(normalize_mac "$(uci -q get "dhcp.$SECTION.mac" 2>/dev/null || true)")
+	IP=$(uci -q get "dhcp.$SECTION.ip" 2>/dev/null || true)
+	CONFIG_TYPE=$(uci -q get "camera_network.$CONFIG_SECTION" 2>/dev/null || true)
+	CONFIG_SLOT=$(uci -q get "camera_network.$CONFIG_SECTION.slot" 2>/dev/null || true)
+	CONFIG_MAC=$(normalize_mac "$(uci -q get "camera_network.$CONFIG_SECTION.camera_mac" 2>/dev/null || true)")
+	CONFIG_IP=$(uci -q get "camera_network.$CONFIG_SECTION.ip" 2>/dev/null || true)
+	ASSIGNED=false
+	CONSISTENT=false
+	if [ "$TYPE" = host ] && [ "$MARKER" = "$SLOT" ] && valid_mac "$MAC" && valid_ip "$IP" && \
+		[ "$CONFIG_TYPE" = camera_slot ] && [ "$CONFIG_SLOT" = "$SLOT" ] && \
+		[ "$CONFIG_MAC" = "$MAC" ] && [ "$CONFIG_IP" = "$IP" ]; then
+		ASSIGNED=true
+		CONSISTENT=true
+	elif [ -z "$TYPE" ] && [ -z "$CONFIG_TYPE" ]; then
+		# An empty slot has no split-brain state to repair.
+		CONSISTENT=true
+		MAC=
+		IP=$DEFAULT_IP
+	else
+		MAC=
+		IP=$DEFAULT_IP
+	fi
+	LIVE_IP=
+	[ "$ASSIGNED" = false ] || LIVE_IP=$(active_lease_ip_for_mac "$MAC" 2>/dev/null || true)
+	FIXED_LIVE_MAC=$(normalize_mac "$(active_lease_mac_for_ip "$IP" 2>/dev/null || true)")
+	PENDING=false
+	if { [ -n "$LIVE_IP" ] && [ "$LIVE_IP" != "$IP" ]; } || \
+		{ [ -n "$FIXED_LIVE_MAC" ] && [ "$FIXED_LIVE_MAC" != "$MAC" ]; }; then
+		PENDING=true
+	fi
+	if [ "$ASSIGNED" = true ]; then
+		if [ -n "$LIVE_IP" ]; then
+			printf '{"slot":"%s","ip":"%s","fixedIp":"%s","mac":"%s","cameraMac":"%s","assigned":true,"consistent":%s,"liveIp":"%s","fixedIpLiveMac":%s,"pending":%s}' "$SLOT" "$IP" "$IP" "$MAC" "$MAC" "$CONSISTENT" "$LIVE_IP" "$(if [ -n "$FIXED_LIVE_MAC" ]; then printf '"%s"' "$FIXED_LIVE_MAC"; else printf null; fi)" "$PENDING"
+		else
+			printf '{"slot":"%s","ip":"%s","fixedIp":"%s","mac":"%s","cameraMac":"%s","assigned":true,"consistent":%s,"liveIp":null,"fixedIpLiveMac":%s,"pending":%s}' "$SLOT" "$IP" "$IP" "$MAC" "$MAC" "$CONSISTENT" "$(if [ -n "$FIXED_LIVE_MAC" ]; then printf '"%s"' "$FIXED_LIVE_MAC"; else printf null; fi)" "$PENDING"
+		fi
+	else
+		printf '{"slot":"%s","ip":"%s","fixedIp":"%s","mac":null,"cameraMac":null,"assigned":false,"consistent":%s,"liveIp":null,"fixedIpLiveMac":%s,"pending":false}' "$SLOT" "$IP" "$IP" "$CONSISTENT" "$(if [ -n "$FIXED_LIVE_MAC" ]; then printf '"%s"' "$FIXED_LIVE_MAC"; else printf null; fi)"
+	fi
+}
+
+query_slots() {
+	local REQUESTED SLOT COMMA
+	REQUESTED=${1:-}
+	if [ -n "$REQUESTED" ]; then
+		query_slot "$REQUESTED"
+		printf '\n'
+		return
+	fi
+	printf '{"slots":['
+	COMMA=
+	for SLOT in A B C D; do
+		printf '%s' "$COMMA"
+		query_slot "$SLOT"
+		COMMA=,
+	done
+	printf ']}\n'
+}
+
+stage_apply() {
+	local TRANSFER TRANSFER_SLOT
+	for TRANSFER in $TRANSFER_SECTIONS; do
+		TRANSFER_SLOT=$(managed_slot_for_section "$TRANSFER") || return 1
+		uci -q delete "dhcp.$TRANSFER" || return 1
+		uci -q delete "camera_network.slot_$(slot_lower "$TRANSFER_SLOT")" || return 1
+	done
+	uci -q delete "dhcp.$TARGET_SECTION" >/dev/null 2>&1 || true
+	uci set "dhcp.$TARGET_SECTION=host" || return 1
+	uci set "dhcp.$TARGET_SECTION.name=camera-$(slot_lower "$SLOT")" || return 1
+	uci set "dhcp.$TARGET_SECTION.mac=$NEW_MAC" || return 1
+	uci set "dhcp.$TARGET_SECTION.ip=$TARGET_IP" || return 1
+	uci set "dhcp.$TARGET_SECTION.camera_network_slot=$SLOT" || return 1
+	uci -q delete "camera_network.$CONFIG_SECTION" >/dev/null 2>&1 || true
+	uci set "camera_network.$CONFIG_SECTION=camera_slot" || return 1
+	uci set "camera_network.$CONFIG_SECTION.slot=$SLOT" || return 1
+	uci set "camera_network.$CONFIG_SECTION.camera_mac=$NEW_MAC" || return 1
+	uci set "camera_network.$CONFIG_SECTION.ip=$TARGET_IP" || return 1
+}
+
+apply_slot() {
+	local SLOT NEW_MAC TARGET_IP TARGET_SECTION TARGET_TYPE TARGET_MARKER OLD_MAC
+	local SECTION TYPE ACTIVE_MAC TRANSFER_SECTIONS CONFIG_SECTION CONFIG_TYPE CONFIG_SLOT
+	SLOT=$(slot_upper "$1") || usage
+	NEW_MAC=$(normalize_mac "$2")
+	valid_mac "$NEW_MAC" || die 'Invalid camera MAC address'
+	TARGET_IP=$(default_ip_for_slot "$SLOT")
+	acquire_lock
+	ip_is_router_address "$TARGET_IP" && die 'The camera address is already used by this router'
+	TARGET_SECTION=$(section_for_slot "$SLOT")
+	CONFIG_SECTION="slot_$(slot_lower "$SLOT")"
+	CONFIG_TYPE=$(uci -q get "camera_network.$CONFIG_SECTION" 2>/dev/null || true)
+	CONFIG_SLOT=$(uci -q get "camera_network.$CONFIG_SECTION.slot" 2>/dev/null || true)
+	if [ -n "$CONFIG_TYPE" ] && { [ "$CONFIG_TYPE" != camera_slot ] || [ "$CONFIG_SLOT" != "$SLOT" ]; }; then
+		die "Camera Network section $CONFIG_SECTION exists and is not a managed slot"
+	fi
+	TARGET_TYPE=$(uci -q get "dhcp.$TARGET_SECTION" 2>/dev/null || true)
+	TARGET_MARKER=$(uci -q get "dhcp.$TARGET_SECTION.camera_network_slot" 2>/dev/null || true)
+	if [ -n "$TARGET_TYPE" ] && { [ "$TARGET_TYPE" != host ] || [ "$TARGET_MARKER" != "$SLOT" ]; }; then
+		die "DHCP section $TARGET_SECTION exists and is not managed by Camera Network"
+	fi
+	OLD_MAC=$(normalize_mac "$(uci -q get "dhcp.$TARGET_SECTION.mac" 2>/dev/null || true)")
+	TRANSFER_SECTIONS=
+	for SECTION in $(uci -q show dhcp 2>/dev/null | sed -n 's/^dhcp\.\([^.=]*\)=host$/\1/p'); do
+		[ "$SECTION" = "$TARGET_SECTION" ] && continue
+		TYPE=$(managed_slot_for_section "$SECTION" 2>/dev/null || true)
+		if option_contains_ip "$TARGET_IP" "$SECTION"; then
+			[ -n "$TYPE" ] && die "Camera address $TARGET_IP is already assigned to slot $TYPE"
+			die "Camera address $TARGET_IP conflicts with an existing DHCP reservation"
+		fi
+		if option_contains_mac "$NEW_MAC" "$SECTION"; then
+			if [ -n "$TYPE" ]; then
+				TRANSFER_SECTIONS="${TRANSFER_SECTIONS}${TRANSFER_SECTIONS:+ }${SECTION}"
+			else
+				die 'Camera MAC conflicts with an existing DHCP reservation'
+			fi
+		fi
+	done
+	ACTIVE_MAC=$(normalize_mac "$(active_lease_mac_for_ip "$TARGET_IP" 2>/dev/null || true)")
+	if [ -n "$ACTIVE_MAC" ] && [ "$ACTIVE_MAC" != "$NEW_MAC" ] && [ "$ACTIVE_MAC" != "$OLD_MAC" ]; then
+		die "Camera address $TARGET_IP is currently leased to another device"
+	fi
+	backup_state
+	if ! stage_apply; then
+		uci -q revert dhcp >/dev/null 2>&1 || true
+		uci -q revert camera_network >/dev/null 2>&1 || true
+		restore_state || true
+		die 'Unable to stage the camera reservation'
+	fi
+	if ! uci commit dhcp || ! uci commit camera_network; then
+		restore_state || true
+		reload_dnsmasq || true
+		die 'Unable to save the camera reservation'
+	fi
+	if ! reload_dnsmasq; then
+		restore_state || true
+		reload_dnsmasq || true
+		die 'Unable to reload DHCP; the previous configuration was restored'
+	fi
+	query_slot "$SLOT"
+	printf '\n'
+}
+
+stage_clear() {
+	uci -q delete "dhcp.$SECTION" || return 1
+	uci -q delete "camera_network.$CONFIG_SECTION" || return 1
+}
+
+clear_slot() {
+	local SLOT SECTION CONFIG_SECTION TYPE MARKER
+	SLOT=$(slot_upper "$1") || usage
+	SECTION=$(section_for_slot "$SLOT")
+	CONFIG_SECTION="slot_$(slot_lower "$SLOT")"
+	acquire_lock
+	TYPE=$(uci -q get "dhcp.$SECTION" 2>/dev/null || true)
+	if [ -z "$TYPE" ]; then
+		[ -z "$(uci -q get "camera_network.$CONFIG_SECTION" 2>/dev/null || true)" ] || die "Camera slot $SLOT configuration is inconsistent"
+		query_slot "$SLOT"; printf '\n'; return
+	fi
+	MARKER=$(uci -q get "dhcp.$SECTION.camera_network_slot" 2>/dev/null || true)
+	[ "$TYPE" = host ] && [ "$MARKER" = "$SLOT" ] || die "DHCP section $SECTION is not managed by Camera Network"
+	[ "$(uci -q get "camera_network.$CONFIG_SECTION" 2>/dev/null || true)" = camera_slot ] || die "Camera slot $SLOT configuration is inconsistent"
+	backup_state
+	if ! stage_clear; then
+		uci -q revert dhcp >/dev/null 2>&1 || true
+		uci -q revert camera_network >/dev/null 2>&1 || true
+		restore_state || true
+		die 'Unable to stage removal of the camera reservation'
+	fi
+	if ! uci commit dhcp || ! uci commit camera_network; then
+		restore_state || true
+		reload_dnsmasq || true
+		die 'Unable to save the camera reservation change'
+	fi
+	if ! reload_dnsmasq; then
+		restore_state || true
+		reload_dnsmasq || true
+		die 'Unable to reload DHCP; the previous configuration was restored'
+	fi
+	query_slot "$SLOT"
+	printf '\n'
+}
+
+self_test() {
+	[ "$(slot_upper a)" = A ]
+	[ "$(default_ip_for_slot D)" = 192.168.12.53 ]
+	[ "$(normalize_mac aa-bb-cc-dd-ee-fe)" = AA:BB:CC:DD:EE:FE ]
+	valid_mac '02:11:22:33:44:55'
+	! valid_mac '03:11:22:33:44:55'
+	! valid_mac 'FF:FF:FF:FF:FF:FF'
+	valid_ip '192.168.12.50'
+	! valid_ip '192.168.12.0'
+	! valid_ip '192.168.12.999'
+	! valid_ip '127.0.0.1'
+	printf 'camera-network-static-ip self-test passed\n'
+}
+
+COMMAND=${1:-}
+case "$COMMAND" in
+	query)
+		[ "$#" -le 2 ] || usage
+		acquire_lock
+		query_slots "${2:-}"
+		;;
+	apply|set)
+		[ "$#" -eq 3 ] || usage
+		apply_slot "$2" "$3"
+		;;
+	clear)
+		[ "$#" -eq 2 ] || usage
+		clear_slot "$2"
+		;;
+	self-test)
+		[ "$#" -eq 1 ] || usage
+		self_test
+		;;
+	*) usage ;;
+esac

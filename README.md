@@ -15,10 +15,11 @@ pages.
 - AP and remote Client chip-temperature monitoring
 - Camera and network-device discovery with custom names, pinning, filtering, and hiding
 - Automatic Client-to-camera association
+- Reassignable A-D camera-position addresses (`192.168.12.50` through `.53`) with direct Web UI links
 - Reachability and latency checks
 - AP and remote Client indicator-light controls, including persistent Status LED restoration
 - One-click remote Client pairing from the AP dashboard; the Client password is used once and never stored
-- Responsive light/dark interface designed for iPad and phone use
+- Responsive interface that follows the iPad or system light/dark appearance, with unobtrusive touch scrolling
 - Dismissible warnings for weak links, offline devices, and high temperatures
 - Boot-to-HaLow-ready timing
 - Configuration export and restore
@@ -41,13 +42,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-6_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-10_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-6_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-10_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -75,6 +76,19 @@ After pairing, the AP reads each Client's local bridge table to identify the
 camera connected to that Client's wired port. This avoids guessing from the
 AP-side wireless bridge, where several Clients share the same port. A manual
 selection remains available and each camera can belong to only one Client.
+
+## Stable A-D camera addresses
+
+The AP dashboard provides four reusable position slots. Assign the currently
+used A Camera to slot A for `192.168.12.50`, B to `.51`, C to `.52`, and D to
+`.53`. The slots belong to the production positions, not permanently to one
+camera: when a project changes, select the replacement camera in the same slot
+and the stable address follows the new camera's MAC address.
+
+The camera must use DHCP. After assigning or replacing a slot, renew the
+camera's DHCP lease or reconnect its network/power before using the new address.
+The dashboard distinguishes a live fixed address from a reservation that is
+waiting for the camera to reconnect, and provides a direct Camera Web UI link.
 
 ## Build the IPK
 

@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Display", sans-serif;
   background: #080a0d;
   color: #f5f7fa;
@@ -37,7 +37,26 @@ body {
   z-index: 100;
   background: #111419;
   border-right: 1px solid #2b3038;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+
+#mainmenu::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+body.camera-theme-light {
+  color-scheme: light;
+  background: #f2f4f3;
+  color: #17211d;
+}
+
+body.camera-theme-light #mainmenu {
+  background: #fff;
+  border-color: #ced8d3;
+}
+
+body.camera-theme-dark { color-scheme: dark; }
 
 .darkMask { display: none; }
 
@@ -70,7 +89,15 @@ body {
   white-space: pre-wrap;
 }
 
-@media (max-width: 760px) {
+@media (prefers-color-scheme: light) {
+  body:not(.camera-theme-dark) {
+    background: #f2f4f3;
+    color: #17211d;
+  }
+  body:not(.camera-theme-dark) .preview-loading { color: #5e6d66; }
+}
+
+@media (max-width: 768px) {
   #maincontent > .container { padding: 10px; }
   #mainmenu.active { display: block; }
   .darkMask.active { display: block; position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, .58); }

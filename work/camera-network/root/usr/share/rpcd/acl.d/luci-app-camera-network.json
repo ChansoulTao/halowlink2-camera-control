@@ -14,6 +14,7 @@
 				"/usr/sbin/camera-network-leds": ["exec"],
 				"/usr/sbin/camera-network-client-leds": ["exec"],
 				"/usr/sbin/camera-network-pair-client": ["exec"],
+				"/usr/sbin/camera-network-static-ip": ["exec"],
 				"/usr/sbin/brctl": ["exec"],
 				"/sbin/logread": ["exec"],
 				"/tmp/camera-network-boot.json": ["read"]

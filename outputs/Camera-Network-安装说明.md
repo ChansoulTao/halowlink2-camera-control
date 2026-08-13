@@ -4,12 +4,12 @@
 
 ## 安装
 
-1. 将 `luci-app-camera-network_1.2.0-6_all.ipk` 上传到设备的 `/tmp/`。
+1. 将 `luci-app-camera-network_1.2.0-10_all.ipk` 上传到设备的 `/tmp/`。
 2. SSH 登录设备。全新的 Client 默认关闭 SSH 时，可在 LuCI 的 Software/软件包页面上传并安装 IPK；安装后会自动启用 SSH。
 3. 使用 SSH 时执行：
 
    ```sh
-   opkg install /tmp/luci-app-camera-network_1.2.0-6_all.ipk
+   opkg install /tmp/luci-app-camera-network_1.2.0-10_all.ipk
    ```
 
 4. 浏览器打开设备 IP。登录后会进入 Camera Network。
@@ -33,7 +33,7 @@ AP 和 Client 都应安装同一个 IPK。AP 提供总览和远程控制，Clien
 上传新版安装包后执行：
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-6_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-10_all.ipk
 ```
 
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。
@@ -45,6 +45,14 @@ opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-6_all.ipk
 - AP 会根据每台 Client 本机的有线桥接信息自动建立对应关系；结果会同步显示在 `Client → Camera Connections`、信号历史和通电恢复区域。
 - 如果一台 Client 后方发现多个设备，可在连接区域手动选择；同一 Camera 不会同时分配给两台 Client。
 
+## A–D 机位固定地址
+
+- A/B/C/D 是可以随项目重新分配的机位槽，不会永久绑定某一台 Camera。
+- 在 AP 页面把当前 A Camera 指定到 A 槽，即为其保留 `192.168.12.50`；B/C/D 分别为 `.51`、`.52`、`.53`。
+- 换项目或更换摄影机时，直接在同一槽选择新 Camera，固定地址会转给新 Camera 的 MAC，旧 Camera 不再占用该槽。
+- Camera 必须使用 DHCP。分配后需要让 Camera 续租 DHCP，或重新连接网络/供电；页面会区分“已生效”和“等待重连”。
+- 地址生效后可直接点击固定 IP 打开对应 Camera Web UI。
+
 ## 卸载
 
 ```sh
@@ -54,8 +62,9 @@ opkg remove luci-app-camera-network
 ## 使用提示
 
 - 在 `Discovered Devices` 中置顶并命名摄影机。
-- 点击摄影机名称可打开其 Camera Control 页面。
+- 点击摄影机名称或 IP 地址可打开其 Camera Control 页面。
 - `Monitor` 适合 iPad 长时间监看。
+- 界面会自动跟随 iPad 或系统的浅色/深色外观；iPad 左侧导航仍可触控滚动，但不会显示多余滚动条。
 - 开启 Indicator lights 后，AP 与 Client 的 Status 灯会恢复为对应模式的常亮状态。
 - 通电恢复数据从安装后台监测服务后的下一次完整启动开始最准确。
 - 不同固件版本可能需要调整 LuCI 或无线接口名称，安装前建议备份设备配置。

@@ -62,6 +62,7 @@ chmod 0755 \
 	"$TMP_DIR/root/usr/sbin/camera-network-leds" \
 	"$TMP_DIR/root/usr/sbin/camera-network-client-leds" \
 	"$TMP_DIR/root/usr/sbin/camera-network-pair-client" \
+	"$TMP_DIR/root/usr/sbin/camera-network-static-ip" \
 	"$TMP_DIR/control/preinst" \
 	"$TMP_DIR/control/postinst" \
 	"$TMP_DIR/control/prerm"

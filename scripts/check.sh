@@ -29,7 +29,10 @@ sh -n \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-monitor" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-leds" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-client-leds" \
-	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-pair-client"
+	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-pair-client" \
+	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip"
+
+"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip" self-test
 
 node --check "$ROOT_DIR/work/camera-network/root/www/luci-static/resources/view/camera-network/index.js"
 jq empty \

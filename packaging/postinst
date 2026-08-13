@@ -8,6 +8,7 @@ chmod 0755 /usr/sbin/camera-network-monitor \
 	/usr/sbin/camera-network-leds \
 	/usr/sbin/camera-network-client-leds \
 	/usr/sbin/camera-network-pair-client \
+	/usr/sbin/camera-network-static-ip \
 	/etc/init.d/camera-network-monitor
 
 test -f /usr/share/camera-network/index.html

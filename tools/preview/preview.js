@@ -12,6 +12,10 @@ const config = {
   },
   camera_network: {
     settings: { '.name': 'settings', '.type': 'settings', leds_enabled: '1' },
+    slot_a: { '.name': 'slot_a', '.type': 'camera_slot', slot: 'A', ip: '192.168.12.50', camera_mac: CAMERA_A },
+    slot_b: { '.name': 'slot_b', '.type': 'camera_slot', slot: 'B', ip: '192.168.12.51', camera_mac: CAMERA_B },
+    slot_c: { '.name': 'slot_c', '.type': 'camera_slot', slot: 'C', ip: '192.168.12.52', camera_mac: '' },
+    slot_d: { '.name': 'slot_d', '.type': 'camera_slot', slot: 'D', ip: '192.168.12.53', camera_mac: '' },
     [cameraSection(CLIENT_A)]: {
       '.name': cameraSection(CLIENT_A), '.type': 'camera', mac: CLIENT_A,
       name: '', note: 'Camera A bridge', last_ip: '192.168.12.194',
@@ -29,7 +33,7 @@ const config = {
     },
     [cameraSection(CAMERA_B)]: {
       '.name': cameraSection(CAMERA_B), '.type': 'camera', mac: CAMERA_B,
-      name: 'B-Cam FX6', note: 'Handheld · Stage right', last_ip: '192.168.12.102',
+      name: 'B-Cam FX6', note: 'Handheld · Stage right', last_ip: '192.168.12.51',
       pinned: '1', hidden: '0', bound_camera_mac: ''
     }
   }
@@ -70,7 +74,7 @@ const leases = {
     { macaddr: CLIENT_A, ipaddr: '192.168.12.194', hostname: 'halow-client-a' },
     { macaddr: CLIENT_B, ipaddr: '192.168.12.195', hostname: 'halow-client-b' },
     { macaddr: CAMERA_A, ipaddr: '192.168.12.101', hostname: 'venice2-a' },
-    { macaddr: CAMERA_B, ipaddr: '192.168.12.102', hostname: 'fx6-b' },
+    { macaddr: CAMERA_B, ipaddr: '192.168.12.51', hostname: 'fx6-b' },
     { macaddr: '64:DB:8B:10:20:30', ipaddr: '192.168.12.120', hostname: 'video-assist' }
   ]
 };
@@ -80,7 +84,7 @@ const hints = {
     [CLIENT_A]: { name: 'halow-client-a', ipaddrs: ['192.168.12.194'] },
     [CLIENT_B]: { name: 'halow-client-b', ipaddrs: ['192.168.12.195'] },
     [CAMERA_A]: { name: 'venice2-a', ipaddrs: ['192.168.12.101'] },
-    [CAMERA_B]: { name: 'fx6-b', ipaddrs: ['192.168.12.102'] }
+    [CAMERA_B]: { name: 'fx6-b', ipaddrs: ['192.168.12.51'] }
   },
   getIPAddrByMACAddr(mac) {
     const host = this.hosts[String(mac).toUpperCase()];
@@ -177,6 +181,7 @@ const translate = value => String(value);
 
 const uci = {
   load: async () => undefined,
+  unload: () => undefined,
   get(configName, sectionName, optionName) {
     const section = config[configName] && config[configName][sectionName];
     return optionName === undefined ? section : section && section[optionName];
@@ -199,7 +204,29 @@ const uci = {
 };
 
 const fs = {
-  async exec(path) {
+  async exec(path, args = []) {
+    if (path.endsWith('/camera-network-static-ip')) {
+      const [action, slot, mac] = args;
+      if (!['apply', 'clear'].includes(action) || !['A', 'B', 'C', 'D'].includes(slot))
+        return { code: 2, stderr: 'Invalid camera slot command' };
+      if (action === 'apply' && !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(String(mac || '').toUpperCase()))
+        return { code: 2, stderr: 'Invalid camera MAC address' };
+      const sectionName = `slot_${slot.toLowerCase()}`;
+      const normalizedMac = String(mac || '').toUpperCase();
+      if (action === 'apply') {
+        for (const section of Object.values(config.camera_network))
+          if (section['.type'] === 'camera_slot' && section.camera_mac === normalizedMac)
+            section.camera_mac = '';
+      }
+      config.camera_network[sectionName] = {
+        '.name': sectionName,
+        '.type': 'camera_slot',
+        slot,
+        camera_mac: action === 'apply' ? normalizedMac : '',
+        ip: `192.168.12.${49 + slot.charCodeAt(0) - 64}`
+      };
+      return { code: 0, stdout: `${slot} Cam address ${action === 'apply' ? 'applied' : 'cleared'}` };
+    }
     return { code: 0, stdout: `Mock command completed: ${path}` };
   },
   async exec_direct(path) {
