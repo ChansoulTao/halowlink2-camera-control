@@ -1,5 +1,5 @@
 Package: luci-app-camera-network
-Version: 1.2.0-10
+Version: 1.2.0-13
 Architecture: all
 Maintainer: Camera Network Project
 Depends: luci-base, rpcd, iwinfo, busybox, uclient-fetch, jsonfilter, dropbear, dnsmasq

@@ -102,9 +102,15 @@ body.camera-sidebar-hidden #mainmenu {
 	letter-spacing:.005em;
 	color-scheme:dark;
 	container-type:inline-size;
+	width:100%;
+	max-width:100%;
 	min-width:0;
+	overflow-x:clip;
 	font-variant-numeric:tabular-nums;
 }
+.camera-dashboard *,
+.camera-dashboard *::before,
+.camera-dashboard *::after { box-sizing:border-box; }
 .camera-dashboard .camera-console-bar {
 	display:flex; align-items:center; justify-content:space-between; gap:1rem;
 	margin-bottom:1rem; padding:.8rem 1rem; background:#111419;
@@ -422,7 +428,7 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard .camera-assignment-row { grid-template-columns:1fr;align-items:stretch; }
 	.camera-dashboard .camera-assignment-row select { min-height:44px; }
 }
-@media (max-width: 700px) {
+@media (max-width: 720px) {
 	.camera-dashboard { font-size: 16px; }
 	.camera-dashboard .cbi-section { padding: .8rem !important; }
 	.camera-dashboard .camera-summary-grid { grid-template-columns: 1fr; }
@@ -461,8 +467,8 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard .camera-table-scroll { overflow:visible;border-radius:0; }
 	.camera-dashboard .camera-table-scroll table { display:block;min-width:0;width:100%;background:transparent !important; }
 	.camera-dashboard .camera-table-scroll tbody { display:block;width:100%; }
-	.camera-dashboard .camera-table-scroll tr:first-child { display:none !important; }
-	.camera-dashboard .camera-table-scroll tr:not(:first-child) {
+	.camera-dashboard .camera-table-scroll thead tr:first-child { display:none !important; }
+	.camera-dashboard .camera-table-scroll tbody tr {
 		display:grid !important;
 		grid-template-columns:52px minmax(0,1fr) auto;
 		grid-template-areas:"pin name status" "pin ip ip" "action action action";
@@ -485,8 +491,9 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard .camera-table-scroll td:nth-child(4) { grid-area:ip;color:var(--camera-slate) !important;font-family:ui-monospace,SFMono-Regular,monospace; }
 	.camera-dashboard .camera-table-scroll td:nth-child(7) { grid-area:status;justify-self:end; }
 	.camera-dashboard .camera-table-scroll td:nth-child(8) { grid-area:action;margin-top:.35rem; }
-	.camera-dashboard .camera-table-scroll td:nth-child(8) .cbi-button { width:100%;min-height:44px; }
-	.camera-dashboard .camera-table-scroll .camera-pin { min-width:38px !important;width:38px;min-height:38px;padding:.2rem !important; }
+	.camera-dashboard .camera-table-scroll td:nth-child(8) .cbi-button,
+	.camera-dashboard .camera-table-scroll td:nth-child(8) summary { width:100%;min-height:44px; }
+	.camera-dashboard .camera-table-scroll .camera-pin { min-width:44px !important;width:44px;min-height:44px;padding:.2rem !important; }
 }
 
 /* Signal-first AP operations board. */
@@ -754,15 +761,17 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 .camera-dashboard .camera-search-wrap input { width:100%;min-width:0;padding-left:2.35rem; }
 .camera-dashboard .camera-device-primary { display:flex;align-items:center;gap:.55rem;min-width:150px; }
 .camera-dashboard .camera-device-primary .camera-icon { color:#6e7d75; }
-.camera-dashboard .camera-device-primary a { min-width:0;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f0f5f2;font-weight:800;text-decoration:none; }
+.camera-dashboard .camera-device-primary a { display:block;min-width:0;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f0f5f2;font-weight:800;text-decoration:none; }
 .camera-dashboard .camera-device-role { display:block;margin-top:.12rem;color:#65726c;font-size:.64rem;text-transform:uppercase;letter-spacing:.06em; }
 .camera-dashboard .camera-device-ip { color:#b7c2bc;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap; }
+.camera-dashboard .camera-device-ip a { color:inherit;text-decoration:none; }
+.camera-dashboard .camera-device-ip a:hover { text-decoration:underline; }
 .camera-dashboard .camera-device-actions { display:flex;align-items:center;justify-content:flex-end;gap:.25rem;white-space:nowrap; }
 .camera-dashboard .camera-device-actions .cbi-button,
 .camera-dashboard .camera-device-table .camera-pin { display:inline-flex;align-items:center;justify-content:center;min-width:34px !important;width:34px;min-height:34px;padding:.2rem !important;border:1px solid #2d3934 !important;background:#171d1b !important;color:#8f9c96 !important; }
 .camera-dashboard .camera-device-table .camera-pin-active { color:#f5b942 !important;border-color:#7a5d22 !important;background:#251e0f !important; }
 .camera-dashboard .camera-device-actions .camera-action-label { display:none; }
-.camera-dashboard .camera-device-details summary { min-height:34px;color:#8f9c96;font-size:.72rem; }
+.camera-dashboard .camera-device-details summary { min-width:34px;min-height:34px;justify-content:center;color:#8f9c96;font-size:.72rem; }
 .camera-dashboard .camera-device-details summary .camera-icon { margin-right:.3rem; }
 .camera-dashboard .camera-empty-state { padding:1.5rem;color:#7c8983;text-align:center; }
 .camera-dashboard button:focus-visible,
@@ -869,6 +878,38 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard table.camera-device-table th,
 	.camera-dashboard table.camera-device-table td { padding:.55rem .4rem !important; }
 	.camera-dashboard .camera-device-actions > div strong { display:none !important; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary,
+	.camera-dashboard .camera-device-table .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
+}
+
+@media (min-width:641px) and (max-width:720px) {
+	.camera-dashboard .camera-table-scroll .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
+	.camera-dashboard .camera-device-actions {
+		display:grid;
+		grid-template-columns:repeat(2,minmax(0,1fr));
+		align-items:stretch;
+		justify-content:stretch;
+		gap:.45rem;
+		width:100%;
+		white-space:normal;
+	}
+	.camera-dashboard .camera-device-actions > * { min-width:0;width:100%; }
+	.camera-dashboard .camera-device-actions > div { display:flex !important;align-items:stretch !important;gap:0 !important;white-space:normal !important; }
+	.camera-dashboard .camera-device-actions .camera-action-label { display:inline; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary {
+		justify-content:center;
+		width:100% !important;
+		min-width:0 !important;
+		min-height:44px;
+		padding:.3rem .45rem !important;
+		gap:.3rem;
+	}
+	.camera-dashboard .camera-device-details summary { list-style:none; }
+	.camera-dashboard .camera-device-details summary::-webkit-details-marker { display:none; }
+	.camera-dashboard .camera-device-details[open] { grid-column:1 / -1; }
+	.camera-dashboard .camera-device-details[open] dl { position:static;width:100%;min-width:0;max-width:none;margin:.45rem 0 0; }
 }
 	@media (max-width:640px) {
 		.camera-dashboard .camera-address-grid { grid-template-columns:1fr; }
@@ -888,7 +929,7 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard .camera-panel { padding:.75rem; }
 	.camera-dashboard .camera-panel-heading { display:block;margin-bottom:.55rem; }
 	.camera-dashboard .camera-panel-heading small { display:block;margin-top:.35rem;text-align:left; }
-	.camera-dashboard .camera-chart-legend { justify-content:flex-start;margin-top:.45rem;overflow-x:auto;flex-wrap:nowrap; }
+	.camera-dashboard .camera-chart-legend { justify-content:flex-start;margin-top:.45rem;overflow:visible;flex-wrap:wrap; }
 	.camera-dashboard .camera-chart-frame { height:215px; }
 	.camera-dashboard .camera-chart-summary { display:none; }
 	.camera-dashboard .camera-live-scroll,
@@ -902,7 +943,15 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard table.camera-live-table tr,
 	.camera-dashboard table.camera-device-table tr { display:grid !important;min-width:0 !important;margin:0;padding:.75rem !important;border:1px solid #27312e !important;border-radius:8px;background:#131917 !important; }
 	.camera-dashboard table.camera-live-table tr { grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem .75rem; }
-	.camera-dashboard table.camera-device-table tr { grid-template-columns:minmax(0,1fr) auto;gap:.5rem .7rem; }
+	.camera-dashboard table.camera-device-table tr {
+		grid-template-columns:44px minmax(0,1fr) auto;
+		grid-template-areas:
+			"pin name status"
+			"pin ip ip"
+			"actions actions actions";
+		gap:.5rem .65rem;
+		align-items:center;
+	}
 	.camera-dashboard table.camera-live-table td,
 	.camera-dashboard table.camera-device-table td { display:block !important;width:auto !important;min-width:0;padding:0 !important;border:0 !important; }
 	.camera-dashboard table.camera-live-table td::before,
@@ -913,22 +962,66 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 	.camera-dashboard table.camera-live-table td:first-child { grid-column:1 / -1; }
 	.camera-dashboard table.camera-live-table td:last-child { display:block !important; }
 	.camera-dashboard .camera-live-light .camera-led-switch { min-height:44px; }
-	.camera-dashboard table.camera-device-table td:nth-child(1) { grid-column:1;grid-row:1 / span 2;align-self:start; }
-	.camera-dashboard table.camera-device-table td:nth-child(2) { grid-column:1 / -1;padding-left:42px !important; }
+	.camera-dashboard table.camera-device-table td:nth-child(1) { grid-area:pin;align-self:start; }
+	.camera-dashboard table.camera-device-table td:nth-child(1)::before { display:none !important;content:none !important; }
+	.camera-dashboard table.camera-device-table td:nth-child(2) { grid-area:name; }
 	.camera-dashboard table.camera-device-table td:nth-child(3),
-	.camera-dashboard table.camera-device-table td:nth-child(4),
-	.camera-dashboard table.camera-device-table td:nth-child(5) { grid-column:1; }
-	.camera-dashboard table.camera-device-table td:last-child { grid-column:1 / -1;margin-top:.35rem;padding-top:.55rem !important;border-top:1px solid #28312e !important; }
-	.camera-dashboard .camera-device-actions { justify-content:flex-start; }
+	.camera-dashboard table.camera-device-table td:nth-child(5),
+	.camera-dashboard table.camera-device-table td:nth-child(6) { display:none !important; }
+	.camera-dashboard table.camera-device-table td:nth-child(4) { grid-area:ip; }
+	.camera-dashboard table.camera-device-table td:nth-child(7) { grid-area:status;align-self:start;justify-self:end; }
+	.camera-dashboard table.camera-device-table td:nth-child(8) { grid-area:actions;margin-top:.35rem;padding-top:.65rem !important;border-top:1px solid #28312e !important; }
+	.camera-dashboard .camera-device-primary { min-width:0; }
+	.camera-dashboard .camera-device-primary a { width:100%;max-width:none; }
+	.camera-dashboard .camera-device-ip { white-space:normal;overflow-wrap:anywhere; }
+	.camera-dashboard .camera-device-actions {
+		display:grid;
+		grid-template-columns:repeat(2,minmax(0,1fr));
+		align-items:stretch;
+		justify-content:stretch;
+		gap:.45rem;
+		width:100%;
+		white-space:normal;
+	}
+	.camera-dashboard .camera-device-actions > * { min-width:0;width:100%; }
+	.camera-dashboard .camera-device-actions > div { display:flex !important;align-items:stretch !important;gap:0 !important;white-space:normal !important; }
 	.camera-dashboard .camera-device-actions .camera-action-label { display:inline; }
-	.camera-dashboard .camera-device-actions .cbi-button { width:auto !important;padding:.3rem .5rem !important;gap:.3rem; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary {
+		justify-content:center;
+		width:100% !important;
+		min-width:0 !important;
+		padding:.3rem .45rem !important;
+		gap:.3rem;
+		overflow:hidden;
+		border:1px solid #2d3934 !important;
+		border-radius:7px;
+		background:#171d1b;
+	}
+	.camera-dashboard .camera-device-details summary { list-style:none; }
+	.camera-dashboard .camera-device-details summary::-webkit-details-marker { display:none; }
+	.camera-dashboard .camera-device-details[open] { grid-column:1 / -1; }
+	.camera-dashboard .camera-device-details[open] dl { position:static;width:100%;min-width:0;max-width:none;margin:.45rem 0 0; }
 	.camera-dashboard .camera-device-actions .cbi-button,
 	.camera-dashboard .camera-device-details summary { min-height:44px; }
 	.camera-dashboard .camera-device-table .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
 	.camera-dashboard .camera-device-tools { grid-template-columns:1fr; }
-	.camera-dashboard .camera-filter-group { display:grid;grid-template-columns:repeat(3,1fr);width:100%; }
-	.camera-dashboard .camera-filter-group .cbi-button:first-child { grid-column:auto; }
+	.camera-dashboard .camera-filter-group { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%; }
+	.camera-dashboard .camera-filter-group .cbi-button { width:100%;white-space:normal;line-height:1.2; }
+	.camera-dashboard .camera-filter-group .cbi-button:first-child { grid-column:1 / -1; }
 	.camera-dashboard .camera-assignment-panel .camera-assignment-row { grid-template-columns:1fr; }
+}
+
+@media (max-width:390px) {
+	.camera-dashboard table.camera-device-table tr {
+		grid-template-columns:44px minmax(0,1fr);
+		grid-template-areas:
+			"pin name"
+			"pin status"
+			"ip ip"
+			"actions actions";
+	}
+	.camera-dashboard table.camera-device-table td:nth-child(7) { justify-self:start; }
 }
 
 /* The operations surface is dark-first, so the explicit light theme needs to
@@ -998,6 +1091,7 @@ body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !import
 .camera-dashboard[data-camera-theme="light"] .camera-device-table .camera-pin { color:#405049 !important;background:#f5f8f6 !important;border-color:#c8d3ce !important; }
 .camera-dashboard[data-camera-theme="light"] .camera-device-table .camera-pin-active { color:#8a5b00 !important;background:#fff3d4 !important;border-color:#d7b668 !important; }
 .camera-dashboard[data-camera-theme="light"] .camera-device-details summary { color:#405049; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-actions .camera-device-details summary { background:#f5f8f6;border-color:#c8d3ce !important; }
 .camera-dashboard[data-camera-theme="light"] .camera-empty-state { color:#52625a; }
 .camera-dashboard[data-camera-theme="light"] .camera-alert-warning { color:#7a5100;background:#fff6df;border-color:#d7b668; }
 .camera-dashboard[data-camera-theme="light"] .camera-alert-danger { color:#9f1c1c;background:#fff0f0;border-color:#e8a4a4; }

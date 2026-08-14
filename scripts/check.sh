@@ -6,6 +6,7 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 VERSION="$(sed -n 's/^Version:[[:space:]]*//p' "$ROOT_DIR/packaging/control" | head -n1)"
 PACKAGE="$(sed -n 's/^Package:[[:space:]]*//p' "$ROOT_DIR/packaging/control" | head -n1)"
 ARCHITECTURE="$(sed -n 's/^Architecture:[[:space:]]*//p' "$ROOT_DIR/packaging/control" | head -n1)"
+DASHBOARD_SOURCE="$ROOT_DIR/work/camera-network/root/www/luci-static/resources/view/camera-network/index.js"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 IPK="$TMP_DIR/${PACKAGE}_${VERSION}_${ARCHITECTURE}.ipk"
@@ -34,10 +35,24 @@ sh -n \
 
 "$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip" self-test
 
-node --check "$ROOT_DIR/work/camera-network/root/www/luci-static/resources/view/camera-network/index.js"
+node --check "$DASHBOARD_SOURCE"
 jq empty \
 	"$ROOT_DIR/work/camera-network/root/usr/share/luci/menu.d/luci-app-camera-network.json" \
 	"$ROOT_DIR/work/camera-network/root/usr/share/rpcd/acl.d/luci-app-camera-network.json"
+
+# Mobile rows must target tbody explicitly. A generic :first-child or
+# :not(:first-child) selector hides or deforms the first discovered device.
+if rg -n -F \
+	-e '.camera-dashboard .camera-table-scroll tr:first-child' \
+	-e '.camera-dashboard .camera-table-scroll tr:not(:first-child)' \
+	"$DASHBOARD_SOURCE"; then
+	echo "Unsafe mobile discovered-device row selector found" >&2
+	exit 1
+fi
+grep -Fq '.camera-dashboard .camera-table-scroll tbody tr {' "$DASHBOARD_SOURCE"
+rg -q -U '\.camera-dashboard \.camera-device-actions \{\n\s*display:grid;\n\s*grid-template-columns:repeat\(2,minmax\(0,1fr\)\);' "$DASHBOARD_SOURCE"
+grep -Fq '.camera-dashboard .camera-filter-group { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%; }' "$DASHBOARD_SOURCE"
+grep -Fq '.camera-dashboard .camera-device-ip a { color:inherit;text-decoration:none; }' "$DASHBOARD_SOURCE"
 
 "$ROOT_DIR/scripts/build-ipk.sh" "$IPK"
 gzip -t "$IPK"
