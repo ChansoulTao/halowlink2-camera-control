@@ -43,13 +43,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-15_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-16_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-15_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-16_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -80,6 +80,16 @@ the off switch takes priority, and re-enabling keeps the previous brightness.
 Brightness is saved when the slider is released, not on every drag step.
 The kernel handles blink/activity timing; a two-second background monitor
 updates the signal band even with the dashboard closed.
+
+On the supported HaLowLink 2 button mapping, holding the body button for at
+least 2 seconds and releasing toggles this device's lights once. Short presses
+retain DPP pairing. The former 5/10-second reset/mode-change actions are
+replaced; use the original WebUI for factory reset or role changes. The vendor
+button script is backed up and restored on uninstall unless an administrator
+has subsequently edited it. AP and Client buttons control only their own lights.
+The dashboard follows local button changes on its next refresh; remote Client
+state is sampled approximately every 10 seconds. After a WebUI switch, allow
+up to 16 seconds for physical changes to appear while old samples settle.
 
 ## Pair a new Client
 

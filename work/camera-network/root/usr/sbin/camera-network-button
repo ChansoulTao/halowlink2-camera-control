@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+# The HaLowLink 2 device-tree label is "reset", but its Linux event is BTN_0.
+# Keep opkg ownership of the vendor file unchanged and retain a recovery copy.
+root="${CAMERA_BUTTON_ROOT:-}"
+target="$root/etc/rc.button/BTN_0"
+backup="$target.camera-network-original"
+installed="$target.camera-network-installed"
+case "${1:-}" in
+	install)
+		code="$root/sys/firmware/devicetree/base/keys/reset/linux,code"
+		[ -f "$code" ] && [ "$(hexdump -v -e '1/1 "%02x"' "$code")" = 00000100 ] || exit 0
+		[ -f "$target" ] || exit 0
+		if [ -f "$installed" ] && ! cmp -s "$target" "$installed"; then
+			echo 'camera-network: preserving administrator-modified BTN_0' >&2
+			exit 0
+		fi
+		[ -f "$backup" ] || cp -p "$target" "$backup"
+		cp "$0" "$target.new"
+		chmod 0755 "$target.new"
+		mv "$target.new" "$target"
+		cp "$target" "$installed"
+		exit 0 ;;
+	remove)
+		if [ -f "$installed" ] && [ -f "$backup" ] && cmp -s "$target" "$installed"; then
+			mv "$backup" "$target"
+			rm -f "$installed"
+		fi
+		exit 0 ;;
+	'') ;;
+	*) exit 2 ;;
+esac
+
+# No timeout is scheduled: holding the button cannot trigger factory reset,
+# mode changes, or repeated toggles. Only the release event acts.
+[ "${BUTTON:-}" = BTN_0 ] && [ "${ACTION:-}" = released ] || exit 0
+case "${SEEN:-}" in ''|*[!0-9]*|??????????*) exit 0 ;; esac
+if [ "$SEEN" -lt 2 ]; then
+	ubus call dpp push_button
+else
+	camera-network-leds toggle
+fi

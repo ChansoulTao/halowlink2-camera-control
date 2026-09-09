@@ -27,6 +27,24 @@ const MAX_SIGNAL_SAMPLES = 150;
 const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 const deviceView = { query: '', filter: 'pinned' };
 let ledOperations = 0;
+const ledStateHoldUntil = new Map();
+function holdLEDState(section) {
+	// Client telemetry is sampled every 10s, with a 5s SSH timeout. Do not
+	// let a pre-command sample undo an acknowledged WebUI switch.
+	ledStateHoldUntil.set(section, Date.now() + 16000);
+}
+function syncLEDState(boot) {
+	if (ledOperations) return;
+	const sync = (section, option, enabled) => {
+		if (typeof enabled !== 'boolean' || Date.now() < (ledStateHoldUntil.get(section) || 0)) return;
+		if (!uci.get('camera_network', section)) uci.add('camera_network', section === 'settings' ? 'led_control' : 'camera', section);
+		uci.set('camera_network', section, option, enabled ? '1' : '0');
+	};
+	sync('settings', 'leds_enabled', boot.ledsEnabled);
+	for (const [mac, state] of Object.entries(boot.clientTelemetry || {}))
+		if (/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac) && state && state.online === true)
+			sync(cameraSection(mac), 'remote_leds_enabled', state.ledsEnabled);
+}
 const AP_CHART_COLORS = ['#59e3aa', '#6da9ff', '#f2b94b', '#d98bec', '#f47c7c', '#a2d85c'];
 const AP_CHART_COLORS_LIGHT = ['#087650', '#245fc7', '#9a6500', '#8a3fa0', '#b42318', '#5c7900'];
 const CAMERA_ADDRESS_SLOTS = Object.freeze([
@@ -1166,6 +1184,7 @@ async function toggleAllLEDs(button) {
 	ledOperations++;
 	try {
 		await fs.exec_direct('/usr/sbin/camera-network-leds', [next ? 'on' : 'off']);
+		holdLEDState('settings');
 		uci.set('camera_network', 'settings', 'leds_enabled', next ? '1' : '0');
 		button.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 		button.setAttribute('aria-pressed', next ? 'true' : 'false');
@@ -1553,6 +1572,7 @@ function renderRemoteClientLEDSwitch(identity, compact) {
 			ledOperations++;
 			try {
 					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, mac, next ? 'on' : 'off']);
+					holdLEDState(section);
 					uci.set('camera_network', section, 'remote_leds_enabled', next ? '1' : '0');
 					uci.set('camera_network', section, 'last_ip', ip);
 				control.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
@@ -2893,6 +2913,7 @@ return view.extend({
 
 		let boot = {};
 		try { boot = JSON.parse(bootText || '{}'); } catch (e) {}
+		syncLEDState(boot);
 		return { board, systemInfo, leases, hints, halow, selfIPs, boot, bridgePorts: parseBridgeFDB(bridgeFDB), linkHistory: parseLinkHistory(linkLog) };
 	},
 

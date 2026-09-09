@@ -14,7 +14,9 @@ const E = (tag, attrs = {}, children = []) => ({ tag, attrs, children: Array.isA
 const injected = source.replace('return view.extend({', `
 showCameraToast = () => {};
 return { renderLEDBrightness: typeof renderLEDBrightness === 'function' ? renderLEDBrightness : undefined,
-  preserveLEDBrightness: typeof preserveLEDBrightness === 'function' ? preserveLEDBrightness : undefined, busy: () => ledOperations };
+  preserveLEDBrightness: typeof preserveLEDBrightness === 'function' ? preserveLEDBrightness : undefined,
+  syncLEDState: typeof syncLEDState === 'function' ? syncLEDState : undefined,
+  holdLEDState: typeof holdLEDState === 'function' ? holdLEDState : undefined, busy: () => ledOperations };
 view.extend({`);
 const api = runInNewContext(`(function() { ${injected} })()`, {
   E, _: s => s, rpc: { declare: () => () => {} },
@@ -70,4 +72,18 @@ const fresh = [...changed];
 api.preserveLEDBrightness({ querySelectorAll: () => oldNodes }, { querySelectorAll: () => changed });
 assert.equal(changed[0], fresh[0], 'a change made by another control is reflected');
 assert.equal(changed[1], fresh[1], 'a changed Client address must get a fresh handler');
+assert.equal(typeof api.syncLEDState, 'function', 'physical button state reaches the dashboard');
+api.syncLEDState({ ledsEnabled:false, clientTelemetry:{ '94:83:C4:93:40:28':{ online:true, ledsEnabled:false } } });
+assert.equal(config.get('settings.leds_enabled'), '0');
+assert.equal(config.get('cam_9483c4934028.remote_leds_enabled'), '0');
+assert.equal(config.get('settings.leds_brightness'), '40', 'sync never changes saved brightness');
+api.syncLEDState({ ledsEnabled:true, clientTelemetry:{ '94:83:C4:93:40:28':{ online:true, ledsEnabled:true } } });
+assert.equal(config.get('settings.leds_enabled'), '1');
+assert.equal(config.get('cam_9483c4934028.remote_leds_enabled'), '1');
+api.holdLEDState('cam_9483c4934028');
+api.syncLEDState({ ledsEnabled:false, clientTelemetry:{ '94:83:C4:93:40:28':{ online:true, ledsEnabled:false } } });
+assert.equal(config.get('settings.leds_enabled'), '0', 'remote settling does not block local button state');
+assert.equal(config.get('cam_9483c4934028.remote_leds_enabled'), '1', 'stale SSH samples cannot undo a just-saved web switch');
+api.syncLEDState({ ledsEnabled:null });
+assert.equal(config.get('settings.leds_enabled'), '0', 'missing or old firmware telemetry must not guess on');
 console.log('LED UI checks passed: saved values, accessible slider, release-to-save, remote target, refresh hold and failure rollback.');

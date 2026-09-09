@@ -14,7 +14,7 @@ valid_percent() {
 	[ "$1" -le 100 ]
 }
 case "$mode" in
-	on|off|apply|tick) [ "$#" -le 1 ] || exit 2 ;;
+	on|off|toggle|apply|tick) [ "$#" -le 1 ] || exit 2 ;;
 	brightness) valid_percent "$value" && [ "$#" -eq 2 ] || exit 2 ;;
 	*) exit 2 ;;
 esac
@@ -27,6 +27,9 @@ for led in "$signal_led" "$status_led" "$wired_led"; do
 	[ -w "$led/multi_intensity" ] && [ "$(cat "$led/multi_index")" = 'red green blue' ] || exit 1
 done
 
+if [ "$mode" = toggle ]; then
+	if [ "$(uci -q get camera_network.settings.leds_enabled || true)" = 0 ]; then mode=on; else mode=off; fi
+fi
 if [ "$mode" = on ] || [ "$mode" = off ] || [ "$mode" = brightness ]; then
 	uci -q get camera_network.settings >/dev/null || uci -q set camera_network.settings=led_control
 	case "$mode" in

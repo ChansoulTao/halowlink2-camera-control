@@ -29,12 +29,15 @@ sh -n \
 	"$ROOT_DIR/work/camera-network/root/etc/init.d/camera-network-monitor" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-monitor" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-leds" \
+	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-button" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-client-leds" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-pair-client" \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip"
 
 "$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip" self-test
 (cd "$ROOT_DIR" && node scripts/test-leds.mjs)
+(cd "$ROOT_DIR" && node scripts/test-button.mjs)
+(cd "$ROOT_DIR" && node scripts/test-led-telemetry.mjs)
 (cd "$ROOT_DIR" && node scripts/test-led-ui.mjs)
 
 node --check "$DASHBOARD_SOURCE"

@@ -86,6 +86,11 @@ else process.exit(2);
   for (const name of ['rgb:led0', 'rgb:led1', 'rgb:led2']) assert.equal(read(`leds/${name}/brightness`), '0');
   ok('brightness', '100');
   assert.equal(read('leds/rgb:led0/multi_intensity'), '0 255 0', 'dimming is not cumulative');
+  ok('brightness', '40');
+  ok('toggle');
+  assert.equal(read('leds/rgb:led1/brightness'), '0', 'button toggle switches all lights off');
+  ok('toggle');
+  assert.equal(read('leds/rgb:led1/multi_intensity'), '0 0 102', 'button toggle restores brightness');
 
   // Verify the remote command contract and MAC guard without a real SSH hop.
   file('bin/ssh', '#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_DIR/ssh-args"\n', 0o755);

@@ -4,12 +4,12 @@
 
 ## 安装
 
-1. 将 `luci-app-camera-network_1.2.0-15_all.ipk` 上传到设备的 `/tmp/`。
+1. 将 `luci-app-camera-network_1.2.0-16_all.ipk` 上传到设备的 `/tmp/`。
 2. SSH 登录设备。全新的 Client 默认关闭 SSH 时，可在 LuCI 的 Software/软件包页面上传并安装 IPK；安装后会自动启用 SSH。
 3. 使用 SSH 时执行：
 
    ```sh
-   opkg install /tmp/luci-app-camera-network_1.2.0-15_all.ipk
+   opkg install /tmp/luci-app-camera-network_1.2.0-16_all.ipk
    ```
 
 4. 浏览器打开设备 IP。登录后会进入 Camera Network。
@@ -33,7 +33,7 @@ AP 和 Client 都应安装同一个 IPK。AP 提供总览和远程控制，Clien
 上传新版安装包后执行：
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-15_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-16_all.ipk
 ```
 
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。
@@ -69,6 +69,8 @@ opkg remove luci-app-camera-network
 - 原 Wi-Fi 灯显示 HaLow 信号：≥ −60 dBm 绿灯常亮；−70 至低于 −60 绿灯每 2 秒闪；−80 至低于 −70 黄灯每秒闪；低于 −80 红灯每秒闪两次；无有效连接信号时红灯每 2 秒短闪 0.1 秒。AP 显示最弱的已连接 Client，Client 显示自己到 AP 的信号。
 - 紫灯显示实体 LAN 网口：网线链路未建立时灭，有链路时常亮，收发数据时闪动。不使用内部 eth0、USB 或独立 WAN 网口的状态，也不代表相机控制已经可用。
 - Status 灯保持蓝色常亮。颜色与闪烁由设备后台和系统灯光驱动处理，关闭网页后仍然工作。
+- 机身按钮按住至少 2 秒后松开，切换本机全部灯光，重新开启保留原亮度；短按仍为原厂 DPP 配对。AP 和 Client 各自只控制本机。原先 5/10 秒长按的重置和模式切换已取消，需要时使用原厂网页操作。
+- 机身按钮状态会同步到网页：本机随页面刷新，AP 查看 Client 约每 10 秒采样；刚操作网页开关后，会留出最多 16 秒避免旧数据把新状态覆盖。升级前备份原厂按钮脚本；卸载恢复原脚本，管理员后续手动修改会保留。
 - 通电恢复数据从安装后台监测服务后的下一次完整启动开始最准确。
 - 不同固件版本可能需要调整 LuCI 或无线接口名称，安装前建议备份设备配置。
 
