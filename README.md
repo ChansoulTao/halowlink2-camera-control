@@ -43,13 +43,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-14_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-15_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-14_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-15_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -75,7 +75,7 @@ The purple LED follows the physical `lan` socket: off without carrier, on
 with carrier, and activity flashes on transmit/receive. It deliberately does
 not use the always-up internal `eth0`, USB, or the separate WAN port.
 It is a cable/link indicator, not proof that camera control is reachable.
-The remaining Status LED stays green. All three follow the saved brightness;
+The remaining Status LED stays blue. All three follow the saved brightness;
 the off switch takes priority, and re-enabling keeps the previous brightness.
 Brightness is saved when the slider is released, not on every drag step.
 The kernel handles blink/activity timing; a two-second background monitor

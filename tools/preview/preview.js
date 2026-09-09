@@ -155,7 +155,9 @@ function E(tag, attributes, children) {
   }
 
   for (const [name, value] of Object.entries(attrs || {})) {
-    if (value === null || value === undefined || value === false)
+    // Match LuCI DOM.attr: false is NOT omitted. For HTML boolean attributes
+    // even disabled="false" disables the control; use null to omit one.
+    if (value === null || value === undefined)
       continue;
     if (typeof value === 'function' && ['click', 'change', 'input', 'toggle'].includes(name)) {
       element.addEventListener(name, value);
@@ -166,9 +168,6 @@ function E(tag, attributes, children) {
     } else if (name === 'value') {
       element.value = value;
       element.setAttribute(name, value);
-    } else if (name === 'checked' || name === 'disabled' || name === 'open' || name === 'selected') {
-      element[name] = Boolean(value);
-      if (value) element.setAttribute(name, '');
     } else {
       element.setAttribute(name, String(value));
     }

@@ -78,7 +78,7 @@ else red=255; green=0; on=250; off=250
 fi
 signal_trigger=default-on
 [ "$on" -eq 0 ] || signal_trigger=timer
-signature="v1:$percent:$red:$green:$on:$off"
+signature="v2:$percent:$red:$green:$on:$off"
 if [ "$mode" = tick ] && [ "$(cat "$state" 2>/dev/null || true)" = "$signature" ] &&
 	trigger_is "$signal_led" "$signal_trigger" && trigger_is "$status_led" default-on &&
 	trigger_is "$wired_led" netdev && [ "$(cat "$wired_led/device_name")" = lan ]; then
@@ -91,7 +91,7 @@ color() {
 	printf '%s %s %s\n' "$(( $2 * percent / 100 ))" "$(( $3 * percent / 100 ))" "$(( $4 * percent / 100 ))" > "$1/multi_intensity"
 }
 color "$signal_led" "$red" "$green" 0
-color "$status_led" 0 255 0
+color "$status_led" 0 0 255
 color "$wired_led" 255 0 127
 
 printf '%s\n' "$signal_trigger" > "$signal_led/trigger"

@@ -1187,7 +1187,16 @@ async function toggleAllLEDs(button) {
 	}
 }
 
-function renderLEDBrightness(identity) {
+function preserveLEDBrightness(root, nextContent) {
+	const existing = new Map(Array.from(root.querySelectorAll('[data-led-brightness-key]'), node => [node.getAttribute('data-led-brightness-key'), node]));
+	for (const next of nextContent.querySelectorAll('[data-led-brightness-key]')) {
+		const previous = existing.get(next.getAttribute('data-led-brightness-key'));
+		if (previous && previous.querySelector('input').value === next.querySelector('input').value)
+			next.replaceWith(previous);
+	}
+}
+
+function renderLEDBrightness(identity, location = 'main') {
 	const section = identity ? cameraSection(identity.mac) : 'settings';
 	const option = identity ? 'remote_leds_brightness' : 'leds_brightness';
 	const raw = uci.get('camera_network', section, option);
@@ -1196,7 +1205,7 @@ function renderLEDBrightness(identity) {
 	const input = E('input', {
 		type:'range', min:'0', max:'100', step:'1', value:saved,
 		'aria-label':identity ? _('Client indicator brightness') : _('Device indicator brightness'),
-		disabled:identity && !identity.ip,
+		disabled:identity && !identity.ip ? true : null,
 		input:() => { output.textContent = `${input.value}%`; },
 		change:async () => {
 			const next = String(input.value);
@@ -1221,7 +1230,9 @@ function renderLEDBrightness(identity) {
 			}
 		}
 	});
-	return E('div', { class:'camera-led-brightness', title:_('Wi-Fi light: HaLow signal. Purple light: LAN cable link and traffic. Settings survive reboot.') }, [
+	return E('div', { class:'camera-led-brightness',
+		'data-led-brightness-key':`${section}:${location}:${identity ? identity.ip || '' : ''}`,
+		title:_('Wi-Fi light: HaLow signal. Purple light: LAN cable link and traffic. Settings survive reboot.') }, [
 		E('label', {}, [E('span', {}, _('Brightness')), output]), input
 	]);
 }
@@ -1564,11 +1575,11 @@ function renderRemoteClientLEDSwitch(identity, compact) {
 	if (!ip)
 		button.disabled = true;
 	if (compact)
-		return E('div', { class:'camera-live-light' }, [button, renderLEDBrightness(identity)]);
+		return E('div', { class:'camera-live-light' }, [button, renderLEDBrightness(identity, 'live')]);
 	return E('div', { style:'display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.4rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
 		E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, ip || _('Management IP unavailable'))]),
 		button,
-		renderLEDBrightness(identity)
+		renderLEDBrightness(identity, 'details')
 	]);
 }
 
@@ -3028,6 +3039,7 @@ return view.extend({
 				]),
 				E('p', { style: 'opacity:.7' }, _('Camera network telemetry refreshes every 2 seconds.'))
 			]);
+			preserveLEDBrightness(root, pageContent);
 			root.replaceChildren(E('style', {}, dashboardStyles), pageContent);
 			window.requestAnimationFrame(() => {
 				const newDeviceScroll = root.querySelector('.camera-table-scroll');
