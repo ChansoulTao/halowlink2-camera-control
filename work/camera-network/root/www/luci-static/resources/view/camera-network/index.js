@@ -26,6 +26,69 @@ const dismissedAlerts = new Set();
 const MAX_SIGNAL_SAMPLES = 150;
 const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 const deviceView = { query: '', filter: 'pinned' };
+let ledOperations = 0;
+const ledStateHoldUntil = new Map();
+function holdLEDState(section) {
+	// Client telemetry is sampled every 10s, with a 5s SSH timeout. Do not
+	// let a pre-command sample undo an acknowledged WebUI switch.
+	ledStateHoldUntil.set(section, Date.now() + 16000);
+}
+function syncLEDState(boot) {
+	if (ledOperations) return;
+	const sync = (section, option, enabled) => {
+		if (typeof enabled !== 'boolean' || Date.now() < (ledStateHoldUntil.get(section) || 0)) return;
+		if (!uci.get('camera_network', section)) uci.add('camera_network', section === 'settings' ? 'led_control' : 'camera', section);
+		uci.set('camera_network', section, option, enabled ? '1' : '0');
+	};
+	sync('settings', 'leds_enabled', boot.ledsEnabled);
+	for (const [mac, state] of Object.entries(boot.clientTelemetry || {}))
+		if (/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac) && state && state.online === true)
+			sync(cameraSection(mac), 'remote_leds_enabled', state.ledsEnabled);
+}
+const AP_CHART_COLORS = ['#59e3aa', '#6da9ff', '#f2b94b', '#d98bec', '#f47c7c', '#a2d85c'];
+const AP_CHART_COLORS_LIGHT = ['#087650', '#245fc7', '#9a6500', '#8a3fa0', '#b42318', '#5c7900'];
+const CAMERA_ADDRESS_SLOTS = Object.freeze([
+	{ id:'A', section:'slot_a', ip:'192.168.12.50' },
+	{ id:'B', section:'slot_b', ip:'192.168.12.51' },
+	{ id:'C', section:'slot_c', ip:'192.168.12.52' },
+	{ id:'D', section:'slot_d', ip:'192.168.12.53' }
+]);
+let requestDashboardRefresh = null;
+
+function applyCameraSystemTheme(root) {
+	const resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	root.dataset.cameraTheme = resolved;
+	document.body.classList.toggle('camera-theme-light', resolved === 'light');
+	document.body.classList.toggle('camera-theme-dark', resolved === 'dark');
+	document.body.dataset.cameraTheme = resolved;
+}
+
+function cameraCanvasUsesDarkTheme(canvas) {
+	const root = canvas && canvas.closest('.camera-dashboard');
+	if (root && root.dataset.cameraTheme)
+		return root.dataset.cameraTheme === 'dark';
+	return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function cameraIcon(name, extraClass) {
+	return E('span', { class:`camera-icon camera-icon-${name}${extraClass ? ` ${extraClass}` : ''}`, 'aria-hidden':'true' });
+}
+
+function scrollToCameraSection(id) {
+	const target = document.getElementById(id);
+	if (target)
+		target.scrollIntoView({ behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block:'start' });
+}
+
+function stableClientColor(mac, lightTheme) {
+	let hash = 0;
+	for (const char of String(mac || ''))
+		hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+	const palette = lightTheme === undefined
+		? (document.body.classList.contains('camera-theme-light') ? AP_CHART_COLORS_LIGHT : AP_CHART_COLORS)
+		: (lightTheme ? AP_CHART_COLORS_LIGHT : AP_CHART_COLORS);
+	return palette[Math.abs(hash) % palette.length];
+}
 
 const dashboardStyles = `
 body.camera-console-active .main-right,
@@ -33,6 +96,11 @@ body.camera-console-active #maincontent,
 body.camera-console-active #maincontent > .container,
 body.camera-console-active #view { background:#090b0e !important; }
 body.camera-console-active #maincontent > .container { max-width:none; }
+body.camera-console-active #mainmenu {
+	scrollbar-width:none !important;
+	-ms-overflow-style:none !important;
+}
+body.camera-console-active #mainmenu::-webkit-scrollbar { width:0;height:0;display:none; }
 body.camera-sidebar-hidden #mainmenu {
 	width:0 !important;
 	min-width:0 !important;
@@ -52,7 +120,16 @@ body.camera-sidebar-hidden #mainmenu {
 	font-family:-apple-system,BlinkMacSystemFont,"Inter","SF Pro Display",sans-serif;
 	letter-spacing:.005em;
 	color-scheme:dark;
+	container-type:inline-size;
+	width:100%;
+	max-width:100%;
+	min-width:0;
+	overflow-x:clip;
+	font-variant-numeric:tabular-nums;
 }
+.camera-dashboard *,
+.camera-dashboard *::before,
+.camera-dashboard *::after { box-sizing:border-box; }
 .camera-dashboard .camera-console-bar {
 	display:flex; align-items:center; justify-content:space-between; gap:1rem;
 	margin-bottom:1rem; padding:.8rem 1rem; background:#111419;
@@ -73,7 +150,13 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-ready-banner > strong { color:#f8fafc !important; }
 .camera-dashboard .camera-ready-no small { color:#ffe4a3 !important; }
 .camera-dashboard .camera-ready-yes small { color:#b7f7da !important; }
-.camera-dashboard .camera-led-control { display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
+.camera-dashboard .camera-led-control { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.65rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
+.camera-dashboard .camera-led-brightness { grid-column:1/-1;min-width:0;width:100%;margin-top:.4rem; }
+.camera-dashboard .camera-led-brightness label { display:flex;align-items:center;justify-content:space-between;gap:.4rem;font-size:.72rem;color:var(--camera-slate); }
+.camera-dashboard .camera-led-brightness input { display:block;width:100%;min-width:0;height:28px;margin:0;accent-color:var(--camera-green,#179447);cursor:pointer; }
+.camera-dashboard .camera-led-brightness input:disabled { opacity:.45;cursor:wait; }
+.camera-dashboard .camera-live-light { min-width:100px; }
+.camera-dashboard .camera-live-light .camera-led-brightness { width:100px; }
 .camera-dashboard .camera-led-control > div:first-child { min-width:0; }
 .camera-dashboard .camera-led-control strong { display:block;color:var(--camera-navy); }
 .camera-dashboard .camera-led-control small { display:block;color:var(--camera-slate);overflow-wrap:anywhere;line-height:1.25; }
@@ -183,6 +266,20 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-assignment-row > div { min-width:0; }
 .camera-dashboard .camera-assignment-row select { width:100%;min-width:0; }
 .camera-dashboard .camera-assignment-row:last-child { border-bottom:0; }
+.camera-dashboard .camera-address-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem; }
+.camera-dashboard .camera-address-card { display:grid;grid-template-columns:auto minmax(0,1fr);gap:.65rem .8rem;align-items:start;min-width:0;padding:.8rem;border:1px solid var(--camera-border);border-radius:8px;background:var(--camera-surface-2); }
+.camera-dashboard .camera-address-slot { display:grid;place-items:center;width:42px;height:42px;border-radius:8px;background:#19372c;color:#5ae3a8;font-size:1.15rem;font-weight:900; }
+.camera-dashboard .camera-address-main { min-width:0; }
+.camera-dashboard .camera-address-heading { display:flex;justify-content:space-between;align-items:center;gap:.65rem;min-width:0; }
+.camera-dashboard .camera-address-heading strong { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--camera-navy); }
+.camera-dashboard .camera-address-main select { width:100%;min-width:0;min-height:42px;margin-top:.55rem; }
+.camera-dashboard .camera-address-details { display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-top:.55rem;color:var(--camera-slate);font-size:.72rem; }
+.camera-dashboard .camera-address-details code { overflow-wrap:anywhere;color:inherit;background:transparent;padding:0; }
+.camera-dashboard .camera-address-link { display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:34px;padding:.3rem .55rem;border:1px solid #2c5e4b;border-radius:6px;color:#65e5ae;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;text-decoration:none;white-space:nowrap; }
+.camera-dashboard .camera-address-link:hover { background:#183328;color:#8bf0c3; }
+.camera-dashboard .camera-address-status { display:block;margin-top:.45rem;line-height:1.35;color:var(--camera-slate); }
+.camera-dashboard .camera-address-status-ready { color:#39d99a; }
+.camera-dashboard .camera-address-status-pending { color:#f2b94b; }
 .camera-dashboard .camera-client-signal-row { display:flex;justify-content:space-between;align-items:flex-end;gap:.75rem;margin-top:.2rem; }
 .camera-dashboard .camera-client-signal-value { font-size:2rem;line-height:1;font-weight:850; }
 .camera-dashboard .camera-signal-track { height:16px;background:#303640;border-radius:999px;overflow:hidden;margin:.7rem 0 .45rem; }
@@ -228,18 +325,22 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-alert-message { min-width:0;flex:1; }
 .camera-dashboard .camera-alert-close { appearance:none;border:0;background:rgba(255,255,255,.1);color:currentColor;width:32px;height:32px;flex:0 0 32px;border-radius:50%;font-size:1.2rem;line-height:1;cursor:pointer; }
 .camera-dashboard .camera-alert-close:hover { background:rgba(255,255,255,.2); }
-	.camera-dashboard canvas.camera-chart {
-		display:block;
-		box-sizing:content-box;
-		width:100% !important;
-		max-width:100%;
-		height:auto !important;
-		min-height:0 !important;
-		max-height:none !important;
-	}
-	/* These ratios exactly match each canvas' logical drawing coordinates. */
-	.camera-dashboard canvas.camera-chart-ap { aspect-ratio:600 / 180; }
-	.camera-dashboard canvas.camera-chart-client { aspect-ratio:600 / 165; }
+.camera-dashboard .camera-chart-frame {
+	position:relative;
+	width:100%;
+	height:260px;
+	height:clamp(220px,28cqw,300px);
+	min-width:0;
+	overflow:hidden;
+}
+.camera-dashboard canvas.camera-chart {
+	display:block;
+	box-sizing:border-box;
+	width:100% !important;
+	height:100% !important;
+	max-width:100%;
+	font-variant-numeric:tabular-nums;
+}
 .camera-dashboard .camera-device-details { position: relative; }
 .camera-dashboard .camera-device-details summary {
 	cursor: pointer;
@@ -286,61 +387,58 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-table-scroll td:first-child::before { display:none !important;content:none !important; }
 .camera-dashboard .camera-pinned-row { background:#fffbeb !important; }
 .camera-dashboard .camera-section-heading h3 { width:auto !important; flex:0 1 auto !important; margin:0 !important; }
-@media (prefers-color-scheme: light) {
-	body.camera-console-active .main-right,
-	body.camera-console-active #maincontent,
-	body.camera-console-active #maincontent > .container,
-	body.camera-console-active #view { background:#f2f2f7 !important; }
-	.camera-dashboard {
-		--camera-navy:#1c1c1e;
-		--camera-slate:#6e6e73;
-		--camera-blue:#ff9f0a;
-		--camera-teal:#16866d;
-		--camera-surface:#ffffff;
-		--camera-surface-2:#f7f7fa;
-		--camera-border:#d1d1d6;
-		color-scheme:light;
-	}
-	.camera-dashboard .camera-console-bar { background:#fff; box-shadow:0 8px 24px rgba(0,0,0,.06); }
-	.camera-dashboard .camera-console-title h2,
-	.camera-dashboard h2,
-	.camera-dashboard h3,
-	.camera-dashboard .cbi-section h2,
-	.camera-dashboard .cbi-section h3 { color:#1c1c1e !important; }
-	.camera-dashboard .camera-console-subtitle { color:#6e6e73; }
-	.camera-dashboard .camera-sidebar-toggle { color:#1c1c1e !important; background:#e9e9ee !important; border-color:#d1d1d6 !important; }
-	.camera-dashboard p, .camera-dashboard small, .camera-dashboard td { color:#3a3a3c; }
-	.camera-dashboard table { background:#fff; color:#1c1c1e; }
-	.camera-dashboard th { color:#6e6e73 !important; background:#f2f2f7 !important; }
-	.camera-dashboard table tr,
-	.camera-dashboard table tr:nth-child(odd),
-	.camera-dashboard table tr:nth-child(even),
-	.camera-dashboard .cbi-section-table-row { background:#fff !important; color:#1c1c1e !important; }
-	.camera-dashboard table tr:first-child { background:#f2f2f7 !important; }
-	.camera-dashboard tbody tr:hover, .camera-dashboard tr.tr:hover { background:#f7f7fa !important; }
-	.camera-dashboard .camera-device-tools input { color:#1c1c1e; background:#fff; }
-	.camera-dashboard input::placeholder { color:#8e8e93; }
-	.camera-dashboard .camera-filter-group { background:#e9e9ee; }
-	.camera-dashboard .camera-filter-button { color:#3a3a3c !important; }
-	.camera-dashboard .camera-filter-button-active { color:#fff !important; background:#ff9f0a !important; }
-	.camera-dashboard .camera-device-details dl { background:#fff; }
-	.camera-dashboard .camera-signal-track { background:#e5e5ea; }
-	.camera-dashboard .camera-device-details dl,
-	.camera-dashboard .camera-device-details dt,
-	.camera-dashboard .camera-device-details dd { color:#1c1c1e !important; }
+body.camera-console-active.camera-theme-light .main-right,
+body.camera-console-active.camera-theme-light #maincontent,
+body.camera-console-active.camera-theme-light #maincontent > .container,
+body.camera-console-active.camera-theme-light #view { background:#f2f4f3 !important; }
+.camera-dashboard[data-camera-theme="light"] {
+	--camera-navy:#17211d;
+	--camera-slate:#5e6d66;
+	--camera-blue:#b76500;
+	--camera-teal:#117a5a;
+	--camera-surface:#ffffff;
+	--camera-surface-2:#f5f7f6;
+	--camera-border:#ced8d3;
+	color-scheme:light;
 }
+.camera-dashboard[data-camera-theme="light"] .camera-console-bar { background:#fff; box-shadow:0 8px 24px rgba(0,0,0,.06); }
+.camera-dashboard[data-camera-theme="light"] .camera-console-title h2,
+.camera-dashboard[data-camera-theme="light"] h2,
+.camera-dashboard[data-camera-theme="light"] h3,
+.camera-dashboard[data-camera-theme="light"] .cbi-section h2,
+.camera-dashboard[data-camera-theme="light"] .cbi-section h3 { color:#17211d !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-console-subtitle { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-sidebar-toggle { color:#17211d !important; background:#e9eeeb !important; border-color:#ced8d3 !important; }
+.camera-dashboard[data-camera-theme="light"] p,
+.camera-dashboard[data-camera-theme="light"] small,
+.camera-dashboard[data-camera-theme="light"] td { color:#34413b; }
+.camera-dashboard[data-camera-theme="light"] table { background:#fff; color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] th { color:#5e6d66 !important; background:#f2f4f3 !important; }
+.camera-dashboard[data-camera-theme="light"] table tr,
+.camera-dashboard[data-camera-theme="light"] table tr:nth-child(odd),
+.camera-dashboard[data-camera-theme="light"] table tr:nth-child(even),
+.camera-dashboard[data-camera-theme="light"] .cbi-section-table-row { background:#fff !important; color:#17211d !important; }
+.camera-dashboard[data-camera-theme="light"] table tr:first-child { background:#f2f4f3 !important; }
+.camera-dashboard[data-camera-theme="light"] tbody tr:hover,
+.camera-dashboard[data-camera-theme="light"] tr.tr:hover { background:#f5f7f6 !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-tools input { color:#17211d; background:#fff; }
+.camera-dashboard[data-camera-theme="light"] input::placeholder { color:#6e7c75; }
+.camera-dashboard[data-camera-theme="light"] .camera-filter-group { background:#e9eeeb; }
+.camera-dashboard[data-camera-theme="light"] .camera-filter-button { color:#34413b !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-filter-button-active { color:#fff !important; background:#b76500 !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-details dl { background:#fff; }
+.camera-dashboard[data-camera-theme="light"] .camera-signal-track { background:#dfe7e3; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-details dl,
+.camera-dashboard[data-camera-theme="light"] .camera-device-details dt,
+.camera-dashboard[data-camera-theme="light"] .camera-device-details dd { color:#17211d !important; }
 @media (display-mode: standalone) {
 	.camera-dashboard { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 	.camera-dashboard .camera-alert { top: max(.75rem, env(safe-area-inset-top)); }
 }
 @media (max-width: 1024px) {
-	.camera-dashboard { font-size: 17px; }
-	.camera-dashboard > h2 { font-size: 2rem; }
-	.camera-dashboard .cbi-section { border-radius: 18px; }
-	.camera-dashboard .cbi-button { min-height: 48px; min-width: 74px; font-size: 1.02rem; }
-	.camera-dashboard td, .camera-dashboard th { padding: .85rem .75rem !important; }
-	.camera-dashboard .camera-alert { font-size:1.08rem; }
-	.camera-dashboard .camera-device-section { padding:1.2rem !important; }
+	.camera-dashboard { font-size:16px; }
+	.camera-dashboard .cbi-button { min-height:44px;min-width:0; }
+	.camera-dashboard .camera-alert { font-size:1rem; }
 }
 @media (max-width: 820px) {
 	.camera-dashboard .camera-summary-grid { grid-template-columns: 1.25fr .9fr; }
@@ -355,7 +453,7 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-assignment-row { grid-template-columns:1fr;align-items:stretch; }
 	.camera-dashboard .camera-assignment-row select { min-height:44px; }
 }
-@media (max-width: 700px) {
+@media (max-width: 720px) {
 	.camera-dashboard { font-size: 16px; }
 	.camera-dashboard .cbi-section { padding: .8rem !important; }
 	.camera-dashboard .camera-summary-grid { grid-template-columns: 1fr; }
@@ -394,8 +492,8 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-table-scroll { overflow:visible;border-radius:0; }
 	.camera-dashboard .camera-table-scroll table { display:block;min-width:0;width:100%;background:transparent !important; }
 	.camera-dashboard .camera-table-scroll tbody { display:block;width:100%; }
-	.camera-dashboard .camera-table-scroll tr:first-child { display:none !important; }
-	.camera-dashboard .camera-table-scroll tr:not(:first-child) {
+	.camera-dashboard .camera-table-scroll thead tr:first-child { display:none !important; }
+	.camera-dashboard .camera-table-scroll tbody tr {
 		display:grid !important;
 		grid-template-columns:52px minmax(0,1fr) auto;
 		grid-template-areas:"pin name status" "pin ip ip" "action action action";
@@ -411,15 +509,626 @@ body.camera-sidebar-hidden #mainmenu {
 	.camera-dashboard .camera-table-scroll td { display:block !important;width:auto !important;min-width:0;padding:0 !important;border:0 !important; }
 	.camera-dashboard .camera-table-scroll td::before { display:none !important;content:none !important; }
 	.camera-dashboard .camera-table-scroll td:nth-child(1) { grid-area:pin;align-self:start; }
-	.camera-dashboard .camera-table-scroll td:nth-child(2) { grid-area:status;justify-self:end; }
-	.camera-dashboard .camera-table-scroll td:nth-child(3) { grid-area:name;font-size:1.05rem; }
-	.camera-dashboard .camera-table-scroll td:nth-child(4) { grid-area:ip;color:var(--camera-slate) !important;font-family:ui-monospace,SFMono-Regular,monospace; }
+	.camera-dashboard .camera-table-scroll td:nth-child(2) { grid-area:name;font-size:1.05rem; }
+	.camera-dashboard .camera-table-scroll td:nth-child(3),
 	.camera-dashboard .camera-table-scroll td:nth-child(5),
 	.camera-dashboard .camera-table-scroll td:nth-child(6) { display:none !important; }
-	.camera-dashboard .camera-table-scroll td:nth-child(7) { grid-area:action;margin-top:.35rem; }
-	.camera-dashboard .camera-table-scroll td:nth-child(7) .cbi-button { width:100%;min-height:44px; }
-	.camera-dashboard .camera-table-scroll .camera-pin { min-width:38px !important;width:38px;min-height:38px;padding:.2rem !important; }
+	.camera-dashboard .camera-table-scroll td:nth-child(4) { grid-area:ip;color:var(--camera-slate) !important;font-family:ui-monospace,SFMono-Regular,monospace; }
+	.camera-dashboard .camera-table-scroll td:nth-child(7) { grid-area:status;justify-self:end; }
+	.camera-dashboard .camera-table-scroll td:nth-child(8) { grid-area:action;margin-top:.35rem; }
+	.camera-dashboard .camera-table-scroll td:nth-child(8) .cbi-button,
+	.camera-dashboard .camera-table-scroll td:nth-child(8) summary { width:100%;min-height:44px; }
+	.camera-dashboard .camera-table-scroll .camera-pin { min-width:44px !important;width:44px;min-height:44px;padding:.2rem !important; }
 }
+
+/* Signal-first AP operations board. */
+.camera-dashboard .camera-icon {
+	display:inline-block;
+	width:1.15rem;
+	height:1.15rem;
+	flex:0 0 1.15rem;
+	background:currentColor;
+	-webkit-mask:var(--camera-icon) center / contain no-repeat;
+	mask:var(--camera-icon) center / contain no-repeat;
+}
+.camera-dashboard .camera-icon-network { --camera-icon:url('/luci-static/resources/view/camera-network/icons/network.svg'); }
+.camera-dashboard .camera-icon-signal { --camera-icon:url('/luci-static/resources/view/camera-network/icons/antenna-signal.svg'); }
+.camera-dashboard .camera-icon-devices { --camera-icon:url('/luci-static/resources/view/camera-network/icons/computer.svg'); }
+.camera-dashboard .camera-icon-upload { --camera-icon:url('/luci-static/resources/view/camera-network/icons/upload.svg'); }
+.camera-dashboard .camera-icon-download { --camera-icon:url('/luci-static/resources/view/camera-network/icons/download.svg'); }
+.camera-dashboard .camera-icon-dashboard { --camera-icon:url('/luci-static/resources/view/camera-network/icons/dashboard-speed.svg'); }
+.camera-dashboard .camera-icon-clients { --camera-icon:url('/luci-static/resources/view/camera-network/icons/group.svg'); }
+.camera-dashboard .camera-icon-chart { --camera-icon:url('/luci-static/resources/view/camera-network/icons/graph-up.svg'); }
+.camera-dashboard .camera-icon-search { --camera-icon:url('/luci-static/resources/view/camera-network/icons/search.svg'); }
+.camera-dashboard .camera-icon-pin { --camera-icon:url('/luci-static/resources/view/camera-network/icons/pin.svg'); }
+.camera-dashboard .camera-icon-more { --camera-icon:url('/luci-static/resources/view/camera-network/icons/more-horiz.svg'); }
+.camera-dashboard .camera-icon-camera { --camera-icon:url('/luci-static/resources/view/camera-network/icons/camera.svg'); }
+.camera-dashboard .camera-icon-edit { --camera-icon:url('/luci-static/resources/view/camera-network/icons/edit-pencil.svg'); }
+.camera-dashboard .camera-icon-hide { --camera-icon:url('/luci-static/resources/view/camera-network/icons/eye-off.svg'); }
+.camera-dashboard .camera-icon-undo { --camera-icon:url('/luci-static/resources/view/camera-network/icons/undo.svg'); }
+.camera-dashboard .camera-icon-check { --camera-icon:url('/luci-static/resources/view/camera-network/icons/check-circle.svg'); }
+.camera-dashboard .camera-icon-clock { --camera-icon:url('/luci-static/resources/view/camera-network/icons/clock.svg'); }
+.camera-dashboard .camera-icon-temperature { --camera-icon:url('/luci-static/resources/view/camera-network/icons/temperature-high.svg'); }
+.camera-dashboard .camera-icon-light { --camera-icon:url('/luci-static/resources/view/camera-network/icons/light-bulb-on.svg'); }
+.camera-dashboard .camera-ops-shell {
+	display:grid;
+	grid-template-columns:224px minmax(0,1fr);
+	min-width:0;
+	min-height:calc(100dvh - 1rem);
+	background:#090c0e;
+	border:1px solid #252d2a;
+	border-radius:12px;
+	overflow:hidden;
+}
+.camera-dashboard .camera-ops-sidebar {
+	position:sticky;
+	top:0;
+	align-self:start;
+	height:calc(100dvh - 1rem);
+	box-sizing:border-box;
+	display:flex;
+	flex-direction:column;
+	gap:1rem;
+	padding:1.2rem 1rem;
+	background:#0f1413;
+	border-right:1px solid #25302c;
+	overflow-y:auto;
+	overscroll-behavior:contain;
+	scrollbar-width:none;
+	-ms-overflow-style:none;
+}
+.camera-dashboard .camera-ops-sidebar::-webkit-scrollbar { width:0;height:0;display:none; }
+.camera-dashboard .camera-side-brand {
+	display:flex;
+	align-items:center;
+	gap:.7rem;
+	min-width:0;
+	padding-bottom:1rem;
+	border-bottom:1px solid #27312e;
+}
+.camera-dashboard .camera-side-brand-icon {
+	display:grid;
+	place-items:center;
+	width:34px;
+	height:34px;
+	flex:0 0 34px;
+	border:1px solid #38594c;
+	border-radius:8px;
+	color:#54e0a5;
+	background:#13221c;
+}
+.camera-dashboard .camera-side-brand strong { display:block;color:#f7faf8;font-size:.95rem;letter-spacing:.045em; }
+.camera-dashboard .camera-side-brand small { display:block;margin-top:.15rem;color:#728078;font-size:.67rem;text-transform:uppercase;letter-spacing:.11em; }
+.camera-dashboard .camera-side-ready {
+	padding:.85rem;
+	border:1px solid #315345;
+	border-radius:9px;
+	background:#10241c;
+}
+.camera-dashboard .camera-side-ready.camera-side-ready-no { border-color:#6e541e;background:#251d0b; }
+.camera-dashboard .camera-side-ready-state { display:flex;align-items:center;gap:.45rem;color:#57e8aa;font-size:1.35rem;font-weight:900;letter-spacing:.09em; }
+.camera-dashboard .camera-side-ready-no .camera-side-ready-state { color:#f6b942; }
+.camera-dashboard .camera-side-ready small { display:block;margin-top:.3rem;color:#a5b5ad;line-height:1.35; }
+.camera-dashboard .camera-side-metrics { display:grid;grid-template-columns:1fr;gap:.55rem; }
+.camera-dashboard .camera-side-metric {
+	min-width:0;
+	padding:.7rem .75rem;
+	border:1px solid #2b3532;
+	border-radius:8px;
+	background:#141a18;
+}
+.camera-dashboard .camera-side-metric-head { display:flex;align-items:center;justify-content:space-between;gap:.5rem;color:#8d9a94;font-size:.67rem;text-transform:uppercase;letter-spacing:.1em; }
+.camera-dashboard .camera-side-metric-head .camera-icon { color:#59dca3; }
+.camera-dashboard .camera-side-metric-value { margin-top:.4rem;color:#f4f8f6;font-size:1rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.camera-dashboard .camera-side-metric-meta { display:block;margin-top:.2rem;color:#718078;font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.camera-dashboard .camera-side-metric .camera-led-switch-label { display:none; }
+.camera-dashboard .camera-side-nav { display:grid;gap:.35rem;margin-top:.1rem; }
+.camera-dashboard .camera-side-nav button {
+	display:flex;
+	align-items:center;
+	gap:.65rem;
+	width:100%;
+	min-height:42px;
+	padding:.55rem .65rem;
+	border:0;
+	border-radius:7px;
+	color:#83918a;
+	background:transparent;
+	font:inherit;
+	font-size:.82rem;
+	font-weight:750;
+	text-align:left;
+	cursor:pointer;
+}
+.camera-dashboard .camera-side-nav button:first-child,
+.camera-dashboard .camera-side-nav button:hover { color:#5be5aa;background:#17231e; }
+.camera-dashboard .camera-side-footer { margin-top:auto;color:#5f6b65;font-size:.68rem;line-height:1.45; }
+.camera-dashboard .camera-ops-main {
+	min-width:0;
+	padding:1rem 1.1rem 1.35rem;
+	background:#0a0e10;
+	overflow-x:clip;
+}
+.camera-dashboard .camera-main-toolbar {
+	display:flex;
+	align-items:center;
+	justify-content:space-between;
+	gap:1rem;
+	min-height:48px;
+	margin-bottom:.85rem;
+}
+.camera-dashboard .camera-main-heading { min-width:0; }
+.camera-dashboard .camera-main-heading h2 { margin:0;font-size:1.12rem;letter-spacing:.055em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.camera-dashboard .camera-main-heading small { display:block;margin-top:.15rem;color:#6f7c76;font-size:.7rem;text-transform:uppercase;letter-spacing:.09em; }
+.camera-dashboard .camera-main-actions { display:flex;align-items:center;gap:.45rem;flex:0 0 auto; }
+.camera-dashboard .camera-main-actions .cbi-button {
+	display:inline-flex;
+	align-items:center;
+	justify-content:center;
+	gap:.4rem;
+	min-height:38px;
+	padding:.4rem .65rem;
+	border:1px solid #2d3834 !important;
+	background:#151b19 !important;
+	color:#b6c0bb !important;
+	font-size:.78rem;
+}
+.camera-dashboard .camera-main-actions .camera-monitor-button { color:#07110d !important;background:#55dca4 !important;border-color:#55dca4 !important; }
+.camera-dashboard .camera-panel {
+	min-width:0;
+	margin:0 0 .85rem;
+	padding:.95rem 1rem;
+	border:1px solid #27312e;
+	border-radius:9px;
+	background:#101513;
+	box-shadow:none;
+}
+.camera-dashboard .camera-panel-heading {
+	display:flex;
+	align-items:flex-start;
+	justify-content:space-between;
+	gap:1rem;
+	margin-bottom:.75rem;
+}
+.camera-dashboard .camera-panel-title { display:flex;align-items:center;gap:.5rem;min-width:0;color:#eaf0ed; }
+.camera-dashboard .camera-panel-title .camera-icon { color:#59dda5; }
+.camera-dashboard .camera-panel-title h3 { margin:0;font-size:.78rem;letter-spacing:.11em; }
+.camera-dashboard .camera-panel-heading small { color:#6f7d76;font-size:.68rem;line-height:1.35;text-align:right; }
+.camera-dashboard .camera-live-scroll,
+.camera-dashboard .camera-device-table-scroll { width:100%;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch; }
+.camera-dashboard table.camera-live-table,
+.camera-dashboard table.camera-device-table {
+	width:100%;
+	margin:0;
+	border:0;
+	border-collapse:collapse;
+	background:transparent;
+	color:#e8eeeb;
+	font-variant-numeric:tabular-nums;
+}
+.camera-dashboard table.camera-live-table { min-width:850px;table-layout:auto; }
+.camera-dashboard table.camera-device-table { min-width:760px; }
+.camera-dashboard table.camera-live-table tr,
+.camera-dashboard table.camera-device-table tr,
+.camera-dashboard table.camera-live-table tr:nth-child(odd),
+.camera-dashboard table.camera-live-table tr:nth-child(even),
+.camera-dashboard table.camera-device-table tr:nth-child(odd),
+.camera-dashboard table.camera-device-table tr:nth-child(even) { background:transparent !important; }
+.camera-dashboard table.camera-live-table th,
+.camera-dashboard table.camera-device-table th {
+	padding:.45rem .55rem .55rem !important;
+	border:0 !important;
+	border-bottom:1px solid #28312e !important;
+	background:transparent !important;
+	color:#65726c !important;
+	font-size:.64rem;
+	font-weight:800;
+	text-transform:uppercase;
+	letter-spacing:.075em;
+	white-space:nowrap;
+}
+.camera-dashboard table.camera-live-table td,
+.camera-dashboard table.camera-device-table td {
+	padding:.7rem .55rem !important;
+	border:0 !important;
+	border-bottom:1px solid #202825 !important;
+	background:transparent !important;
+	color:#dfe6e2 !important;
+	font-size:.78rem;
+	vertical-align:middle;
+}
+.camera-dashboard table.camera-live-table tbody tr:last-child td,
+.camera-dashboard table.camera-device-table tbody tr:last-child td { border-bottom:0 !important; }
+.camera-dashboard .camera-link-name { display:flex;align-items:center;gap:.55rem;min-width:155px; }
+.camera-dashboard .camera-link-name .camera-icon { color:#5ae3a8; }
+.camera-dashboard .camera-link-name-text { min-width:0; }
+.camera-dashboard .camera-link-name strong { display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f2f7f4; }
+.camera-dashboard .camera-link-name small { display:block;margin-top:.18rem;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6d7b74;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.65rem; }
+.camera-dashboard .camera-link-arrow { color:#52625a; }
+.camera-dashboard .camera-metric { color:#eef5f1;font-weight:800;white-space:nowrap;letter-spacing:0;font-stretch:normal; }
+.camera-dashboard .camera-metric-good { color:#5ce6aa; }
+.camera-dashboard .camera-metric-warn { color:#f3b94a; }
+.camera-dashboard .camera-metric-bad { color:#f47c7c; }
+.camera-dashboard .camera-status-pill {
+	display:inline-flex;
+	align-items:center;
+	gap:.35rem;
+	min-height:26px;
+	padding:.15rem .5rem;
+	border-radius:999px;
+	background:#173025;
+	color:#5ce1a7;
+	font-size:.68rem;
+	font-weight:850;
+	white-space:nowrap;
+}
+.camera-dashboard .camera-status-pill::before { content:'';width:6px;height:6px;border-radius:50%;background:currentColor; }
+.camera-dashboard .camera-status-pill-pending { color:#f3b94a;background:#302713; }
+.camera-dashboard .camera-status-pill-offline { color:#e58a8a;background:#301a1a; }
+.camera-dashboard .camera-live-light .camera-led-switch { min-height:32px;padding:.15rem .25rem !important; }
+.camera-dashboard .camera-live-light .camera-led-switch-track { width:40px;height:24px;flex-basis:40px; }
+.camera-dashboard .camera-live-light .camera-led-switch-knob { width:18px;height:18px; }
+.camera-dashboard .camera-live-light .camera-led-switch-on .camera-led-switch-knob { transform:translateX(16px); }
+.camera-dashboard .camera-live-light .camera-led-switch-label { display:none; }
+.camera-dashboard .camera-chart-panel { padding-bottom:.65rem; }
+.camera-dashboard .camera-chart-legend { display:flex;align-items:center;justify-content:flex-end;gap:.7rem;min-width:0;flex-wrap:wrap; }
+.camera-dashboard .camera-chart-legend span { display:inline-flex;align-items:center;gap:.35rem;max-width:180px;color:#8b9892;font-size:.7rem;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.camera-dashboard .camera-legend-dot { width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:currentColor; }
+.camera-dashboard .camera-chart-summary { display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-top:.45rem;color:#68756f;font-size:.67rem; }
+.camera-dashboard .camera-chart-summary strong { color:#9ba7a1;font-weight:700; }
+.camera-dashboard .camera-assignment-panel { padding:.95rem 1rem !important; }
+.camera-dashboard .camera-assignment-panel .camera-assignment-row { grid-template-columns:minmax(155px,.75fr) minmax(280px,1.25fr); }
+.camera-dashboard .camera-device-section.camera-ops-devices { padding:.95rem 1rem !important;box-shadow:none; }
+.camera-dashboard .camera-device-section.camera-ops-devices .camera-section-heading { margin-bottom:.75rem; }
+.camera-dashboard .camera-device-tools { display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:.65rem; }
+.camera-dashboard .camera-search-wrap { position:relative;min-width:0; }
+.camera-dashboard .camera-search-wrap .camera-icon { position:absolute;left:.75rem;top:50%;transform:translateY(-50%);color:#64716a;pointer-events:none; }
+.camera-dashboard .camera-search-wrap input { width:100%;min-width:0;padding-left:2.35rem; }
+.camera-dashboard .camera-device-primary { display:flex;align-items:center;gap:.55rem;min-width:150px; }
+.camera-dashboard .camera-device-primary .camera-icon { color:#6e7d75; }
+.camera-dashboard .camera-device-primary a { display:block;min-width:0;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f0f5f2;font-weight:800;text-decoration:none; }
+.camera-dashboard .camera-device-role { display:block;margin-top:.12rem;color:#65726c;font-size:.64rem;text-transform:uppercase;letter-spacing:.06em; }
+.camera-dashboard .camera-device-ip { color:#b7c2bc;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap; }
+.camera-dashboard .camera-device-ip a { color:inherit;text-decoration:none; }
+.camera-dashboard .camera-device-ip a:hover { text-decoration:underline; }
+.camera-dashboard .camera-device-actions { display:flex;align-items:center;justify-content:flex-end;gap:.25rem;white-space:nowrap; }
+.camera-dashboard .camera-device-actions .cbi-button,
+.camera-dashboard .camera-device-table .camera-pin { display:inline-flex;align-items:center;justify-content:center;min-width:34px !important;width:34px;min-height:34px;padding:.2rem !important;border:1px solid #2d3934 !important;background:#171d1b !important;color:#8f9c96 !important; }
+.camera-dashboard .camera-device-table .camera-pin-active { color:#f5b942 !important;border-color:#7a5d22 !important;background:#251e0f !important; }
+.camera-dashboard .camera-device-actions .camera-action-label { display:none; }
+.camera-dashboard .camera-device-details summary { min-width:34px;min-height:34px;justify-content:center;color:#8f9c96;font-size:.72rem; }
+.camera-dashboard .camera-device-details summary .camera-icon { margin-right:.3rem; }
+.camera-dashboard .camera-empty-state { padding:1.5rem;color:#7c8983;text-align:center; }
+.camera-dashboard button:focus-visible,
+.camera-dashboard a:focus-visible,
+.camera-dashboard input:focus-visible,
+.camera-dashboard select:focus-visible,
+.camera-dashboard summary:focus-visible { outline:2px solid #5ae1a8 !important;outline-offset:2px; }
+
+@media (max-height:850px) and (min-width:1080px) {
+	.camera-dashboard .camera-ops-main { padding-top:.65rem; }
+	.camera-dashboard .camera-main-toolbar { min-height:36px;margin-bottom:.4rem; }
+	.camera-dashboard .camera-panel { margin-bottom:.55rem;padding:.65rem .8rem; }
+	.camera-dashboard .camera-live-panel .camera-panel-heading,
+	.camera-dashboard .camera-chart-panel .camera-panel-heading { margin-bottom:.4rem; }
+	.camera-dashboard .camera-chart-frame { height:205px; }
+	.camera-dashboard .camera-chart-summary { margin-top:.25rem; }
+	.camera-dashboard table.camera-live-table th { padding:.3rem .45rem .4rem !important; }
+	.camera-dashboard table.camera-live-table td { padding:.42rem .45rem !important; }
+}
+@container (max-width:1080px) {
+	.camera-dashboard .camera-ops-shell { grid-template-columns:1fr; }
+	.camera-dashboard .camera-ops-sidebar {
+		position:static;
+		height:auto;
+		display:grid;
+		grid-template-columns:minmax(190px,1.2fr) repeat(3,minmax(130px,1fr));
+		gap:.6rem;
+		padding:.75rem;
+		border-right:0;
+		border-bottom:1px solid #25302c;
+		overflow:visible;
+	}
+	.camera-dashboard .camera-side-brand { grid-column:1 / -1;padding:0;border-bottom:0; }
+	.camera-dashboard .camera-side-ready { padding:.65rem .75rem; }
+	.camera-dashboard .camera-side-ready-state { font-size:1.05rem; }
+	.camera-dashboard .camera-side-ready small { white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+	.camera-dashboard .camera-side-metrics { display:contents; }
+	.camera-dashboard .camera-side-metric { padding:.55rem .65rem; }
+	.camera-dashboard .camera-side-nav,
+	.camera-dashboard .camera-side-footer { display:none; }
+	.camera-dashboard .camera-ops-main { padding:.8rem; }
+	.camera-dashboard .camera-live-scroll { overflow-x:auto; }
+	.camera-dashboard .camera-chart-frame { height:235px; }
+}
+@media (max-width:1080px) {
+	.camera-dashboard .camera-ops-shell { grid-template-columns:1fr; }
+	.camera-dashboard .camera-ops-sidebar { position:static;height:auto;display:grid;grid-template-columns:minmax(190px,1.2fr) repeat(3,minmax(130px,1fr));gap:.6rem;padding:.75rem;border-right:0;border-bottom:1px solid #25302c;overflow:visible; }
+	.camera-dashboard .camera-side-brand { grid-column:1 / -1;padding:0;border-bottom:0; }
+	.camera-dashboard .camera-side-ready { padding:.65rem .75rem; }
+	.camera-dashboard .camera-side-ready-state { font-size:1.05rem; }
+	.camera-dashboard .camera-side-ready small { white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+	.camera-dashboard .camera-side-metrics { display:contents; }
+	.camera-dashboard .camera-side-metric { padding:.55rem .65rem; }
+	.camera-dashboard .camera-side-nav,.camera-dashboard .camera-side-footer { display:none; }
+	.camera-dashboard .camera-ops-main { padding:.8rem; }
+	.camera-dashboard .camera-chart-frame { height:235px; }
+}
+@media (max-width:900px) {
+	.camera-dashboard .camera-ops-shell { grid-template-columns:1fr; }
+	.camera-dashboard .camera-ops-sidebar { position:static;height:auto;display:grid;grid-template-columns:minmax(190px,1.2fr) repeat(3,minmax(130px,1fr));gap:.6rem;padding:.75rem;border-right:0;border-bottom:1px solid #25302c;overflow:visible; }
+	.camera-dashboard .camera-side-brand { grid-column:1 / -1;padding:0;border-bottom:0; }
+	.camera-dashboard .camera-side-ready { padding:.65rem .75rem; }
+	.camera-dashboard .camera-side-ready-state { font-size:1.05rem; }
+	.camera-dashboard .camera-side-ready small { white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+	.camera-dashboard .camera-side-metrics { display:contents; }
+	.camera-dashboard .camera-side-metric { padding:.55rem .65rem; }
+	.camera-dashboard .camera-side-nav,.camera-dashboard .camera-side-footer { display:none; }
+	.camera-dashboard .camera-ops-main { padding:.8rem; }
+	.camera-dashboard .camera-chart-frame { height:235px; }
+	.camera-dashboard .camera-live-scroll { overflow:visible; }
+	.camera-dashboard table.camera-live-table { display:block;min-width:0;width:100%;background:transparent !important; }
+	.camera-dashboard table.camera-live-table thead { display:none !important; }
+	.camera-dashboard table.camera-live-table tbody { display:grid;width:100%;gap:.55rem; }
+	.camera-dashboard table.camera-live-table tr {
+		display:grid !important;
+		grid-template-columns:minmax(180px,1.6fr) repeat(4,minmax(62px,.7fr));
+		grid-template-rows:auto auto;
+		gap:.5rem .7rem;
+		min-width:0 !important;
+		padding:.65rem .7rem !important;
+		border:1px solid #24302b !important;
+		border-radius:8px;
+		background:#121816 !important;
+	}
+	.camera-dashboard table.camera-live-table td { display:block !important;width:auto !important;min-width:0;padding:0 !important;border:0 !important; }
+	.camera-dashboard table.camera-live-table td::before { content:attr(data-label) !important;display:block !important;margin-bottom:.15rem;color:#637069;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.065em; }
+	.camera-dashboard table.camera-live-table td:nth-child(1) { grid-column:1;grid-row:1 / span 2;align-self:center; }
+	.camera-dashboard table.camera-live-table td:nth-child(1)::before { display:none !important; }
+	.camera-dashboard table.camera-live-table td:nth-child(2) { grid-column:2;grid-row:1; }
+	.camera-dashboard table.camera-live-table td:nth-child(3) { grid-column:3;grid-row:1; }
+	.camera-dashboard table.camera-live-table td:nth-child(4) { grid-column:4;grid-row:1; }
+	.camera-dashboard table.camera-live-table td:nth-child(5) { grid-column:5;grid-row:1; }
+	.camera-dashboard table.camera-live-table td:nth-child(6) { grid-column:2;grid-row:2; }
+	.camera-dashboard table.camera-live-table td:nth-child(7) { grid-column:3;grid-row:2; }
+	.camera-dashboard table.camera-live-table td:nth-child(8) { grid-column:4;grid-row:2; }
+	.camera-dashboard table.camera-live-table td:nth-child(9) { grid-column:5;grid-row:2;align-self:end; }
+	.camera-dashboard table.camera-device-table { min-width:0; }
+	.camera-dashboard table.camera-device-table th:nth-child(3),
+	.camera-dashboard table.camera-device-table td:nth-child(3),
+	.camera-dashboard table.camera-device-table th:nth-child(5),
+	.camera-dashboard table.camera-device-table td:nth-child(5),
+	.camera-dashboard table.camera-device-table th:nth-child(6),
+	.camera-dashboard table.camera-device-table td:nth-child(6) { display:none !important; }
+	.camera-dashboard table.camera-device-table th,
+	.camera-dashboard table.camera-device-table td { padding:.55rem .4rem !important; }
+	.camera-dashboard .camera-device-actions > div strong { display:none !important; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary,
+	.camera-dashboard .camera-device-table .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
+}
+
+@media (min-width:641px) and (max-width:720px) {
+	.camera-dashboard .camera-table-scroll .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
+	.camera-dashboard .camera-device-actions {
+		display:grid;
+		grid-template-columns:repeat(2,minmax(0,1fr));
+		align-items:stretch;
+		justify-content:stretch;
+		gap:.45rem;
+		width:100%;
+		white-space:normal;
+	}
+	.camera-dashboard .camera-device-actions > * { min-width:0;width:100%; }
+	.camera-dashboard .camera-device-actions > div { display:flex !important;align-items:stretch !important;gap:0 !important;white-space:normal !important; }
+	.camera-dashboard .camera-device-actions .camera-action-label { display:inline; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary {
+		justify-content:center;
+		width:100% !important;
+		min-width:0 !important;
+		min-height:44px;
+		padding:.3rem .45rem !important;
+		gap:.3rem;
+	}
+	.camera-dashboard .camera-device-details summary { list-style:none; }
+	.camera-dashboard .camera-device-details summary::-webkit-details-marker { display:none; }
+	.camera-dashboard .camera-device-details[open] { grid-column:1 / -1; }
+	.camera-dashboard .camera-device-details[open] dl { position:static;width:100%;min-width:0;max-width:none;margin:.45rem 0 0; }
+}
+	@media (max-width:640px) {
+		.camera-dashboard .camera-address-grid { grid-template-columns:1fr; }
+		.camera-dashboard .camera-address-heading { align-items:stretch;flex-direction:column;gap:.45rem; }
+		.camera-dashboard .camera-address-link { width:100%; }
+		.camera-dashboard .camera-ops-shell { border:0;border-radius:0; }
+	.camera-dashboard .camera-ops-sidebar { grid-template-columns:1fr 1fr;padding:.65rem; }
+	.camera-dashboard .camera-side-brand { grid-column:1 / -1; }
+	.camera-dashboard .camera-side-ready { grid-column:1 / -1; }
+	.camera-dashboard .camera-side-metric.camera-config-only { display:block !important;grid-column:1 / -1; }
+	.camera-dashboard .camera-ops-main { padding:.65rem; }
+	.camera-dashboard .camera-main-toolbar { align-items:flex-start; }
+	.camera-dashboard .camera-main-heading small { display:none; }
+	.camera-dashboard .camera-main-actions .camera-export-button { display:none !important; }
+	.camera-dashboard .camera-main-actions .cbi-button { width:44px;min-height:44px;padding:.3rem !important; }
+	.camera-dashboard .camera-main-actions .cbi-button span:not(.camera-icon) { display:none; }
+	.camera-dashboard .camera-panel { padding:.75rem; }
+	.camera-dashboard .camera-panel-heading { display:block;margin-bottom:.55rem; }
+	.camera-dashboard .camera-panel-heading small { display:block;margin-top:.35rem;text-align:left; }
+	.camera-dashboard .camera-chart-legend { justify-content:flex-start;margin-top:.45rem;overflow:visible;flex-wrap:wrap; }
+	.camera-dashboard .camera-chart-frame { height:215px; }
+	.camera-dashboard .camera-chart-summary { display:none; }
+	.camera-dashboard .camera-live-scroll,
+	.camera-dashboard .camera-device-table-scroll { overflow:visible; }
+	.camera-dashboard table.camera-live-table,
+	.camera-dashboard table.camera-device-table { display:block;min-width:0;width:100%;background:transparent !important; }
+	.camera-dashboard table.camera-live-table thead,
+	.camera-dashboard table.camera-device-table thead { display:none !important; }
+	.camera-dashboard table.camera-live-table tbody,
+	.camera-dashboard table.camera-device-table tbody { display:grid;width:100%;gap:.65rem; }
+	.camera-dashboard table.camera-live-table tr,
+	.camera-dashboard table.camera-device-table tr { display:grid !important;min-width:0 !important;margin:0;padding:.75rem !important;border:1px solid #27312e !important;border-radius:8px;background:#131917 !important; }
+	.camera-dashboard table.camera-live-table tr { grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem .75rem; }
+	.camera-dashboard table.camera-device-table tr {
+		grid-template-columns:44px minmax(0,1fr) auto;
+		grid-template-areas:
+			"pin name status"
+			"pin ip ip"
+			"actions actions actions";
+		gap:.5rem .65rem;
+		align-items:center;
+	}
+	.camera-dashboard table.camera-live-table td,
+	.camera-dashboard table.camera-device-table td { display:block !important;width:auto !important;min-width:0;padding:0 !important;border:0 !important; }
+	.camera-dashboard table.camera-live-table td::before,
+	.camera-dashboard table.camera-device-table td::before { content:attr(data-label) !important;display:block !important;margin-bottom:.15rem;color:#637069;font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em; }
+	.camera-dashboard table.camera-live-table td:first-child { grid-column:1 / -1;padding-bottom:.55rem !important;border-bottom:1px solid #28312e !important; }
+	.camera-dashboard table.camera-live-table td:first-child::before { display:none !important; }
+	.camera-dashboard table.camera-live-table td:nth-child(n) { grid-column:auto;grid-row:auto;align-self:auto; }
+	.camera-dashboard table.camera-live-table td:first-child { grid-column:1 / -1; }
+	.camera-dashboard table.camera-live-table td:last-child { display:block !important; }
+	.camera-dashboard .camera-live-light .camera-led-switch { min-height:44px; }
+	.camera-dashboard table.camera-device-table td:nth-child(1) { grid-area:pin;align-self:start; }
+	.camera-dashboard table.camera-device-table td:nth-child(1)::before { display:none !important;content:none !important; }
+	.camera-dashboard table.camera-device-table td:nth-child(2) { grid-area:name; }
+	.camera-dashboard table.camera-device-table td:nth-child(3),
+	.camera-dashboard table.camera-device-table td:nth-child(5),
+	.camera-dashboard table.camera-device-table td:nth-child(6) { display:none !important; }
+	.camera-dashboard table.camera-device-table td:nth-child(4) { grid-area:ip; }
+	.camera-dashboard table.camera-device-table td:nth-child(7) { grid-area:status;align-self:start;justify-self:end; }
+	.camera-dashboard table.camera-device-table td:nth-child(8) { grid-area:actions;margin-top:.35rem;padding-top:.65rem !important;border-top:1px solid #28312e !important; }
+	.camera-dashboard .camera-device-primary { min-width:0; }
+	.camera-dashboard .camera-device-primary a { width:100%;max-width:none; }
+	.camera-dashboard .camera-device-ip { white-space:normal;overflow-wrap:anywhere; }
+	.camera-dashboard .camera-device-actions {
+		display:grid;
+		grid-template-columns:repeat(2,minmax(0,1fr));
+		align-items:stretch;
+		justify-content:stretch;
+		gap:.45rem;
+		width:100%;
+		white-space:normal;
+	}
+	.camera-dashboard .camera-device-actions > * { min-width:0;width:100%; }
+	.camera-dashboard .camera-device-actions > div { display:flex !important;align-items:stretch !important;gap:0 !important;white-space:normal !important; }
+	.camera-dashboard .camera-device-actions .camera-action-label { display:inline; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary {
+		justify-content:center;
+		width:100% !important;
+		min-width:0 !important;
+		padding:.3rem .45rem !important;
+		gap:.3rem;
+		overflow:hidden;
+		border:1px solid #2d3934 !important;
+		border-radius:7px;
+		background:#171d1b;
+	}
+	.camera-dashboard .camera-device-details summary { list-style:none; }
+	.camera-dashboard .camera-device-details summary::-webkit-details-marker { display:none; }
+	.camera-dashboard .camera-device-details[open] { grid-column:1 / -1; }
+	.camera-dashboard .camera-device-details[open] dl { position:static;width:100%;min-width:0;max-width:none;margin:.45rem 0 0; }
+	.camera-dashboard .camera-device-actions .cbi-button,
+	.camera-dashboard .camera-device-details summary { min-height:44px; }
+	.camera-dashboard .camera-device-table .camera-pin { width:44px;min-width:44px !important;min-height:44px; }
+	.camera-dashboard .camera-device-tools { grid-template-columns:1fr; }
+	.camera-dashboard .camera-filter-group { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%; }
+	.camera-dashboard .camera-filter-group .cbi-button { width:100%;white-space:normal;line-height:1.2; }
+	.camera-dashboard .camera-filter-group .cbi-button:first-child { grid-column:1 / -1; }
+	.camera-dashboard .camera-assignment-panel .camera-assignment-row { grid-template-columns:1fr; }
+}
+
+@media (max-width:390px) {
+	.camera-dashboard table.camera-device-table tr {
+		grid-template-columns:44px minmax(0,1fr);
+		grid-template-areas:
+			"pin name"
+			"pin status"
+			"ip ip"
+			"actions actions";
+	}
+	.camera-dashboard table.camera-device-table td:nth-child(7) { justify-self:start; }
+}
+
+/* The operations surface is dark-first, so the explicit light theme needs to
+ * cover the newer AP components as well as the legacy LuCI cards above. */
+.camera-dashboard[data-camera-theme="light"] .camera-ops-shell { background:#f6f8f7;border-color:#ced8d3; }
+.camera-dashboard[data-camera-theme="light"] .camera-ops-sidebar { background:#ffffff;border-color:#d7e0dc; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-brand { border-color:#d7e0dc; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-brand-icon { color:#117a5a;background:#e8f6f0;border-color:#a5d8c4; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-brand strong { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-brand small { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-ready { color:#17211d;background:#eaf7f1;border-color:#91cdb5; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-ready.camera-side-ready-no { background:#fff6df;border-color:#d7b668; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-ready-state { color:#117a5a; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-ready-no .camera-side-ready-state { color:#8a5b00; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-ready small { color:#405049; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-metric { background:#f5f8f6;border-color:#d7e0dc; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-metric-head { color:#52625a; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-metric-head .camera-icon { color:#117a5a; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-metric-value { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-metric-meta { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-nav button { color:#4f5f57; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-nav button:first-child,
+.camera-dashboard[data-camera-theme="light"] .camera-side-nav button:hover { color:#0b684b;background:#e6f4ee; }
+.camera-dashboard[data-camera-theme="light"] .camera-side-footer { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-ops-main { background:#f2f4f3; }
+.camera-dashboard[data-camera-theme="light"] .camera-main-heading small { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-main-actions .cbi-button { color:#34413b !important;background:#ffffff !important;border-color:#c8d3ce !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-main-actions .camera-monitor-button { color:#073b2a !important;background:#8de3bd !important;border-color:#60c99c !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-panel { background:#ffffff;border-color:#ced8d3; }
+.camera-dashboard[data-camera-theme="light"] .camera-panel-title { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-panel-title .camera-icon { color:#117a5a; }
+.camera-dashboard[data-camera-theme="light"] .camera-panel-heading small { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table th,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table th { color:#52625a !important;border-color:#d7e0dc !important; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table td,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table td { color:#27342e !important;border-color:#e2e8e5 !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-link-name strong { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-link-name small { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-link-arrow { color:#64736c; }
+.camera-dashboard[data-camera-theme="light"] .camera-metric { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-metric-good { color:#087650; }
+.camera-dashboard[data-camera-theme="light"] .camera-metric-warn { color:#8a5b00; }
+.camera-dashboard[data-camera-theme="light"] .camera-metric-bad { color:#b42318; }
+.camera-dashboard[data-camera-theme="light"] .camera-status-pill { color:#087650;background:#e4f5ed; }
+.camera-dashboard[data-camera-theme="light"] .camera-status-pill-pending { color:#7a5100;background:#fff3d4; }
+.camera-dashboard[data-camera-theme="light"] .camera-status-pill-offline { color:#a72121;background:#fdecec; }
+.camera-dashboard[data-camera-theme="light"] .camera-chart-legend span { color:#52625a; }
+.camera-dashboard[data-camera-theme="light"] .camera-chart-summary { color:#5e6d66; }
+.camera-dashboard[data-camera-theme="light"] .camera-chart-summary strong { color:#34413b; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-tools input,
+.camera-dashboard[data-camera-theme="light"] .camera-device-tools select,
+.camera-dashboard[data-camera-theme="light"] .camera-assignment-row select,
+.camera-dashboard[data-camera-theme="light"] .camera-address-main select { color:#17211d;background:#ffffff;border-color:#c8d3ce; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-card { background:#f5f8f6;border-color:#c8d3ce; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-slot { color:#087650;background:#e4f5ed; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-link { color:#087650;background:#ffffff;border-color:#91cdb5; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-link:hover { color:#064e3b;background:#e4f5ed; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-status-ready { color:#087650; }
+.camera-dashboard[data-camera-theme="light"] .camera-address-status-pending { color:#7a5100; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-primary a { color:#17211d; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-primary .camera-icon,
+.camera-dashboard[data-camera-theme="light"] .camera-device-role { color:#52625a; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-ip { color:#34413b; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-actions .cbi-button,
+.camera-dashboard[data-camera-theme="light"] .camera-device-table .camera-pin { color:#405049 !important;background:#f5f8f6 !important;border-color:#c8d3ce !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-table .camera-pin-active { color:#8a5b00 !important;background:#fff3d4 !important;border-color:#d7b668 !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-details summary { color:#405049; }
+.camera-dashboard[data-camera-theme="light"] .camera-device-actions .camera-device-details summary { background:#f5f8f6;border-color:#c8d3ce !important; }
+.camera-dashboard[data-camera-theme="light"] .camera-empty-state { color:#52625a; }
+.camera-dashboard[data-camera-theme="light"] .camera-alert-warning { color:#7a5100;background:#fff6df;border-color:#d7b668; }
+.camera-dashboard[data-camera-theme="light"] .camera-alert-danger { color:#9f1c1c;background:#fff0f0;border-color:#e8a4a4; }
+.camera-dashboard[data-camera-theme="light"] .camera-client-temperature { color:#087650;background:#e4f5ed; }
+.camera-dashboard[data-camera-theme="light"] .camera-client-temperature.warm { color:#7a5100;background:#fff3d4; }
+.camera-dashboard[data-camera-theme="light"] .camera-client-temperature.hot { color:#9f1c1c;background:#fdecec; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table td::before,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table td::before { color:#52625a !important; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table tr,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table tr { background:#ffffff !important;border-color:#d7e0dc !important; }
+.camera-dashboard[data-camera-theme="light"] table.camera-live-table td:first-child,
+.camera-dashboard[data-camera-theme="light"] table.camera-device-table td:last-child { border-color:#d7e0dc !important; }
 `;
 
 function applySavedSidebarState() {
@@ -472,21 +1181,79 @@ async function toggleAllLEDs(button) {
 	const enabled = uci.get('camera_network', 'settings', 'leds_enabled') !== '0';
 	const next = !enabled;
 	button.disabled = true;
+	ledOperations++;
 	try {
 		await fs.exec_direct('/usr/sbin/camera-network-leds', [next ? 'on' : 'off']);
+		holdLEDState('settings');
 		uci.set('camera_network', 'settings', 'leds_enabled', next ? '1' : '0');
 		button.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 		button.setAttribute('aria-pressed', next ? 'true' : 'false');
+		button.setAttribute('aria-label', next ? _('Disable indicator lights') : _('Enable indicator lights'));
+		button.title = next ? _('Disable indicator lights') : _('Enable indicator lights');
 		button.replaceChildren(
 			E('span', { class:'camera-led-switch-track' }, E('span', { class:'camera-led-switch-knob' })),
 			E('span', { class:'camera-led-switch-label' }, next ? _('On') : _('Off'))
 		);
+		const sidebarValue = button.closest('.camera-side-metric') && button.closest('.camera-side-metric').querySelector('.camera-side-metric-value');
+		if (sidebarValue)
+			sidebarValue.textContent = next ? _('Enabled') : _('Disabled');
 		showCameraToast(next ? _('Indicator lights enabled') : _('Indicator lights disabled'));
 	} catch (error) {
 		showCameraToast(_('Unable to change indicator lights'), true);
 	} finally {
+		ledOperations--;
 		button.disabled = false;
 	}
+}
+
+function preserveLEDBrightness(root, nextContent) {
+	const existing = new Map(Array.from(root.querySelectorAll('[data-led-brightness-key]'), node => [node.getAttribute('data-led-brightness-key'), node]));
+	for (const next of nextContent.querySelectorAll('[data-led-brightness-key]')) {
+		const previous = existing.get(next.getAttribute('data-led-brightness-key'));
+		if (previous && previous.querySelector('input').value === next.querySelector('input').value)
+			next.replaceWith(previous);
+	}
+}
+
+function renderLEDBrightness(identity, location = 'main') {
+	const section = identity ? cameraSection(identity.mac) : 'settings';
+	const option = identity ? 'remote_leds_brightness' : 'leds_brightness';
+	const raw = uci.get('camera_network', section, option);
+	let saved = /^\d{1,3}$/.test(String(raw)) && Number(raw) <= 100 ? String(Number(raw)) : '100';
+	const output = E('output', {}, `${saved}%`);
+	const input = E('input', {
+		type:'range', min:'0', max:'100', step:'1', value:saved,
+		'aria-label':identity ? _('Client indicator brightness') : _('Device indicator brightness'),
+		disabled:identity && !identity.ip ? true : null,
+		input:() => { output.textContent = `${input.value}%`; },
+		change:async () => {
+			const next = String(input.value);
+			if (next === saved) return;
+			input.disabled = true;
+			ledOperations++;
+			try {
+				if (identity)
+					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [identity.ip, identity.mac, 'brightness', next]);
+				else
+					await fs.exec_direct('/usr/sbin/camera-network-leds', ['brightness', next]);
+				if (!uci.get('camera_network', section)) uci.add('camera_network', identity ? 'camera' : 'led_control', section);
+				uci.set('camera_network', section, option, next);
+				saved = next;
+			} catch (error) {
+				input.value = saved;
+				showCameraToast(_('Unable to change brightness — check the connection and Client software version'), true);
+			} finally {
+				output.textContent = `${saved}%`;
+				input.disabled = !!(identity && !identity.ip);
+				ledOperations--;
+			}
+		}
+	});
+	return E('div', { class:'camera-led-brightness',
+		'data-led-brightness-key':`${section}:${location}:${identity ? identity.ip || '' : ''}`,
+		title:_('Wi-Fi light: HaLow signal. Purple light: LAN cable link and traffic. Settings survive reboot.') }, [
+		E('label', {}, [E('span', {}, _('Brightness')), output]), input
+	]);
 }
 
 function renderLEDControl() {
@@ -501,7 +1268,30 @@ function renderLEDControl() {
 	]);
 	return E('div', { class:'cbi-section camera-led-control camera-config-only' }, [
 		E('div', {}, [E('strong', {}, _('Indicator lights')), E('small', {}, enabled ? _('Automatic network indication enabled') : _('All device lights are disabled'))]),
-		button
+		button,
+		renderLEDBrightness()
+	]);
+}
+
+function renderSidebarLEDControl() {
+	const enabled = uci.get('camera_network', 'settings', 'leds_enabled') !== '0';
+	const button = E('button', {
+		class:`cbi-button camera-led-switch ${enabled ? 'camera-led-switch-on' : 'camera-led-switch-off'}`,
+		'aria-label':enabled ? _('Disable indicator lights') : _('Enable indicator lights'),
+		'aria-pressed':enabled ? 'true' : 'false',
+		title:enabled ? _('Disable indicator lights') : _('Enable indicator lights'),
+		click:ev => toggleAllLEDs(ev.currentTarget)
+	}, [
+		E('span', { class:'camera-led-switch-track' }, E('span', { class:'camera-led-switch-knob' })),
+		E('span', { class:'camera-led-switch-label' }, enabled ? _('On') : _('Off'))
+	]);
+	return E('div', { class:'camera-side-metric camera-config-only' }, [
+		E('div', { class:'camera-side-metric-head' }, [E('span', {}, _('Indicator lights')), cameraIcon('light')]),
+		E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.25rem' }, [
+			E('span', { class:'camera-side-metric-value', style:'margin:0' }, enabled ? _('Enabled') : _('Disabled')),
+			button
+		]),
+		renderLEDBrightness()
 	]);
 }
 
@@ -512,6 +1302,73 @@ function cameraSection(mac) {
 function normalizeMac(mac) {
 	const compact = String(mac || '').replace(/[^A-Fa-f0-9]/g, '').toUpperCase();
 	return compact.length === 12 ? compact.match(/.{2}/g).join(':') : String(mac || '').toUpperCase();
+}
+
+function cameraAddressSlot(slotID) {
+	return CAMERA_ADDRESS_SLOTS.find(slot => slot.id === String(slotID || '').toUpperCase()) || null;
+}
+
+function cameraAddressAssignments() {
+	return CAMERA_ADDRESS_SLOTS.map(slot => ({
+		...slot,
+		cameraMac:normalizeMac(uci.get('camera_network', slot.section, 'camera_mac'))
+	}));
+}
+
+function cameraAddressSlotForMac(mac) {
+	const normalized = normalizeMac(mac);
+	return normalized ? cameraAddressAssignments().find(slot => slot.cameraMac === normalized) || null : null;
+}
+
+function safeCameraAddressMessage(value) {
+	return String(value || '')
+		.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+		.replace(/\b(password|passphrase|secret|key)\s*[:=]\s*\S+/gi, '$1=[redacted]')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 180);
+}
+
+async function runCameraAddressHelper(slot, cameraMac) {
+	const args = cameraMac ? ['apply', slot.id, cameraMac] : ['clear', slot.id];
+	const result = await fs.exec('/usr/sbin/camera-network-static-ip', args);
+	if (result && result.code !== undefined && Number(result.code) !== 0) {
+		const detail = safeCameraAddressMessage(result.stderr || result.stdout);
+		throw new Error(detail || _('The device rejected the address update.'));
+	}
+	return result || {};
+}
+
+async function setCameraAddressSlot(slotID, cameraMac, currentIP, options) {
+	const slot = cameraAddressSlot(slotID);
+	const normalized = normalizeMac(cameraMac);
+	const settings = options || {};
+	if (!slot || (normalized && !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(normalized)))
+		throw new Error(_('Invalid camera address assignment.'));
+
+	try {
+		await runCameraAddressHelper(slot, normalized);
+		if (typeof uci.unload === 'function')
+			uci.unload('camera_network');
+		await uci.load('camera_network');
+
+		if (!settings.silent) {
+			if (!normalized)
+				showCameraToast(_('%s Cam address cleared').format(slot.id));
+			else if (String(currentIP || '') !== slot.ip)
+				showCameraToast(_('%s Cam assigned to %s — reconnect the camera or renew DHCP').format(slot.id, slot.ip));
+			else
+				showCameraToast(_('%s Cam is ready at %s').format(slot.id, slot.ip));
+		}
+		if (!settings.deferRefresh && requestDashboardRefresh)
+			await requestDashboardRefresh();
+		return true;
+	} catch (error) {
+		const detail = safeCameraAddressMessage(error && error.message);
+		if (!settings.silent)
+			showCameraToast(detail ? _('Address update failed: %s').format(detail) : _('Unable to update the camera address'), true);
+		throw error;
+	}
 }
 
 function cameraProfile(mac) {
@@ -547,10 +1404,11 @@ function telemetryWiredMacs(telemetry) {
 function cameraRecord(mac, devices) {
 	const normalized = normalizeMac(mac);
 	const live = (devices || []).find(device => normalizeMac(device.mac) === normalized);
+	const addressSlot = cameraAddressSlotForMac(normalized);
 	if (live)
-		return { ...live, mac:normalized };
+		return { ...live, mac:normalized, addressSlot, fixedIP:addressSlot ? addressSlot.ip : '' };
 	const profile = cameraProfile(normalized);
-	return { mac:normalized, ip:profile.lastIP || '', fallbackName:profile.name || '', online:false, current:false };
+	return { mac:normalized, ip:profile.lastIP || '', fallbackName:profile.name || '', online:false, current:false, addressSlot, fixedIP:addressSlot ? addressSlot.ip : '' };
 }
 
 function buildClientIdentities(displayPeers, livePeers, devices, boot) {
@@ -670,7 +1528,7 @@ function showCameraToast(message, error) {
 	window.setTimeout(() => toast.remove(), error ? 4500 : 2600);
 }
 
-function renderRemoteClientLEDSwitch(identity) {
+function renderRemoteClientLEDSwitch(identity, compact) {
 	const mac = identity.mac;
 	const section = cameraSection(mac);
 	const profile = identity.profile;
@@ -692,29 +1550,41 @@ function renderRemoteClientLEDSwitch(identity) {
 			finally { password=null; control.disabled=!ip; }
 		} }, _('Pair'));
 		if (!ip) pair.disabled=true;
+		if (compact) {
+			pair.classList.add('camera-live-light-button');
+			pair.title = _('Pair this Client for remote light control');
+			pair.setAttribute('aria-label', _('Pair this Client for remote light control'));
+			return E('div', { class:'camera-live-light' }, pair);
+		}
 		return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
 			E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, _('Pair required'))]), pair
 		]);
 	}
 	const button = E('button', {
 		class:`cbi-button camera-led-switch ${enabled ? 'camera-led-switch-on' : 'camera-led-switch-off'}`,
+		'aria-label':enabled ? _('Disable Client lights') : _('Enable Client lights'),
+		title:enabled ? _('Disable Client lights') : _('Enable Client lights'),
 		'aria-pressed':enabled ? 'true' : 'false',
 		click:async ev => {
 			const control = ev.currentTarget;
 			const next = !cameraProfile(mac).remoteLEDS;
 			control.disabled = true;
+			ledOperations++;
 			try {
 					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, mac, next ? 'on' : 'off']);
+					holdLEDState(section);
 					uci.set('camera_network', section, 'remote_leds_enabled', next ? '1' : '0');
 					uci.set('camera_network', section, 'last_ip', ip);
-				await uci.save();
 				control.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 				control.setAttribute('aria-pressed', next ? 'true' : 'false');
+				control.setAttribute('aria-label', next ? _('Disable Client lights') : _('Enable Client lights'));
+				control.title = next ? _('Disable Client lights') : _('Enable Client lights');
 				control.querySelector('.camera-led-switch-label').textContent = next ? _('On') : _('Off');
 				showCameraToast(next ? _('Client lights enabled') : _('Client lights disabled'));
 			} catch (error) {
 				showCameraToast(_('Client control failed — check pairing and connection'), true);
 			} finally {
+				ledOperations--;
 				control.disabled = !ip;
 			}
 		}
@@ -724,9 +1594,12 @@ function renderRemoteClientLEDSwitch(identity) {
 	]);
 	if (!ip)
 		button.disabled = true;
-	return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
+	if (compact)
+		return E('div', { class:'camera-live-light' }, [button, renderLEDBrightness(identity, 'live')]);
+	return E('div', { style:'display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.4rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
 		E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, ip || _('Management IP unavailable'))]),
-		button
+		button,
+		renderLEDBrightness(identity, 'details')
 	]);
 }
 
@@ -748,6 +1621,8 @@ async function bindCameraToClient(clientMac, cameraMac) {
 	await uci.save();
 	await uci.apply(10);
 	showCameraToast(cameraMac ? _('Camera assigned to Client') : _('Camera assignment cleared'));
+	if (requestDashboardRefresh)
+		await requestDashboardRefresh();
 }
 
 function parseBridgeFDB(text) {
@@ -803,6 +1678,8 @@ async function toggleCameraPin(mac, ip) {
 	}
 	await uci.save();
 	await uci.apply(10);
+	if (requestDashboardRefresh)
+		await requestDashboardRefresh();
 }
 
 async function editCameraProfile(mac, ip, fallbackName) {
@@ -823,6 +1700,8 @@ async function editCameraProfile(mac, ip, fallbackName) {
 	await uci.save();
 	await uci.apply(10);
 	showCameraToast(_('Camera profile saved'));
+	if (requestDashboardRefresh)
+		await requestDashboardRefresh();
 }
 
 async function hideCameraDevice(mac, ip) {
@@ -834,6 +1713,8 @@ async function hideCameraDevice(mac, ip) {
 	await uci.save();
 	await uci.apply(10);
 	showCameraToast(_('Device hidden'));
+	if (requestDashboardRefresh)
+		await requestDashboardRefresh();
 }
 
 function valueOrDash(value) {
@@ -1053,7 +1934,7 @@ function renderAPAlerts(peers, identities) {
 	return dismissibleAlert('ap-network', 'camera-alert-warning', `▲ ${alerts.join(' · ')}`);
 }
 
-function renderReadiness(peers, devices, identities) {
+function APReadinessState(peers, devices, identities) {
 	const clientMacs = new Set(identities.keys());
 	const saved = (uci.sections('camera_network', 'camera') || []).filter(section => section.pinned === '1' && !clientMacs.has(String(section.mac || '').toUpperCase()));
 	const visible = new Set(devices.filter(device => device.online).map(device => normalizeMac(device.mac)));
@@ -1066,13 +1947,134 @@ function renderReadiness(peers, devices, identities) {
 	const ready = peers.length > 0 && saved.length > 0 && missing.length === 0;
 	const clientText = peers.length === 1 ? _('1 HaLow client') : _('%d HaLow clients').format(peers.length);
 	const cameraText = saved.length === 1 ? _('1 camera') : _('%d cameras').format(saved.length);
-	let detail = ready ? _('%s and %s online').format(clientText, cameraText)
+	const detail = ready ? _('%s and %s online').format(clientText, cameraText)
 		: !peers.length ? _('No HaLow client connected')
 		: !saved.length ? _('Pin at least one camera below')
 		: missing.length === 1 ? _('1 pinned camera offline') : _('%d pinned cameras offline').format(missing.length);
+	return { ready, detail, clientCount:peers.length, cameraCount:saved.length, missingCount:missing.length };
+}
+
+function renderReadiness(peers, devices, identities) {
+	const readiness = APReadinessState(peers, devices, identities);
+	const ready = readiness.ready;
 	return E('div', { class:`camera-ready-banner ${ready ? 'camera-ready-yes' : 'camera-ready-no'}` }, [
-		E('div', {}, [E('div', { class:'camera-ready-word', style:`color:${ready ? '#34d399' : '#fbbf24'}` }, ready ? 'READY' : 'NOT READY'), E('small', {}, detail)]),
+		E('div', {}, [E('div', { class:'camera-ready-word', style:`color:${ready ? '#34d399' : '#fbbf24'}` }, ready ? 'READY' : 'NOT READY'), E('small', {}, readiness.detail)]),
 		E('strong', {}, ready ? _('Ready to shoot') : _('Check network'))
+	]);
+}
+
+function renderAPSidebar(state, devices, identities) {
+	const readiness = APReadinessState(state.halow.peers, devices, identities);
+	const temperature = Number(state.boot.temperature);
+	const temperatureAvailable = Number.isFinite(temperature);
+	const temperatureClass = temperature >= 85 ? ' camera-metric-bad' : temperature >= 75 ? ' camera-metric-warn' : ' camera-metric-good';
+	const healthy = state.halow.peers.length > 0 && state.halow.peers.every(peer => Number(peer.signal) >= -75);
+	const ssid = uci.get('wireless', 'default_radio1', 'ssid') || '—';
+	const channel = uci.get('wireless', 'radio1', 'channel') || '—';
+	const apRecovery = state.boot.ap !== undefined && state.boot.ap !== null ? formatDuration(state.boot.ap) : _('Waiting…');
+	return E('aside', { class:'camera-ops-sidebar' }, [
+		E('div', { class:'camera-side-brand' }, [
+			E('span', { class:'camera-side-brand-icon' }, cameraIcon('network')),
+			E('div', {}, [E('strong', {}, _('CAMERA NETWORK')), E('small', {}, _('HaLow operations'))])
+		]),
+		E('div', { class:`camera-side-ready${readiness.ready ? '' : ' camera-side-ready-no'}` }, [
+			E('div', { class:'camera-side-ready-state' }, [cameraIcon(readiness.ready ? 'check' : 'dashboard'), readiness.ready ? 'READY' : _('CHECK')]),
+			E('small', { title:readiness.detail }, readiness.detail)
+		]),
+		E('div', { class:'camera-side-metrics' }, [
+			E('div', { class:'camera-side-metric' }, [
+				E('div', { class:'camera-side-metric-head' }, [E('span', {}, _('Access point')), cameraIcon('signal')]),
+				E('div', { class:`camera-side-metric-value ${healthy ? 'camera-metric-good' : 'camera-metric-warn'}` }, healthy ? _('Healthy') : _('Attention')),
+				E('small', { class:'camera-side-metric-meta', title:`${ssid} · ${_('Channel')} ${channel}` }, `${state.halow.peers.length} ${_('clients')} · ${ssid} · CH ${channel}`)
+			]),
+			E('div', { class:'camera-side-metric' }, [
+				E('div', { class:'camera-side-metric-head' }, [E('span', {}, _('Temperature')), cameraIcon('temperature')]),
+				E('div', { class:`camera-side-metric-value${temperatureAvailable ? temperatureClass : ''}` }, temperatureAvailable ? `${temperature}°C` : '—'),
+				E('small', { class:'camera-side-metric-meta' }, `${_('AP ready')} · ${apRecovery}`)
+			])
+		]),
+		renderSidebarLEDControl(),
+		E('nav', { class:'camera-side-nav', 'aria-label':_('Dashboard sections') }, [
+			E('button', { click:() => scrollToCameraSection('camera-live-links') }, [cameraIcon('dashboard'), E('span', {}, _('Live link status'))]),
+			E('button', { click:() => scrollToCameraSection('camera-signal-history') }, [cameraIcon('chart'), E('span', {}, _('Signal history'))]),
+			E('button', { class:'camera-config-only', click:() => scrollToCameraSection('camera-connections') }, [cameraIcon('camera'), E('span', {}, _('Camera connections'))]),
+			E('button', { class:'camera-config-only', click:() => scrollToCameraSection('camera-devices') }, [cameraIcon('devices'), E('span', {}, _('Discovered devices'))])
+		]),
+		E('div', { class:'camera-side-footer' }, [
+			E('div', {}, _('Telemetry updates every 2 seconds.')),
+			E('div', {}, _('Recovery timing continues while this page is closed.'))
+		])
+	]);
+}
+
+function formatCompactDuration(seconds) {
+	if (seconds === null || seconds === undefined || seconds === '' || !Number.isFinite(Number(seconds)))
+		return '—';
+	const value = Math.max(0, Math.round(Number(seconds)));
+	return value < 60 ? `${value}s` : `${Math.floor(value / 60)}m ${value % 60}s`;
+}
+
+function renderLiveLinkStatus(identities) {
+	const clients = Array.from(identities.values())
+		.filter(identity => identity.peer || identity.profile.remotePaired || identity.telemetry.recovery !== undefined)
+		.sort((a, b) => a.name.localeCompare(b.name));
+	const rows = clients.map(identity => {
+		const peer = identity.peer || {};
+		const signal = identity.online && Number.isFinite(Number(peer.signal)) ? Number(peer.signal) : null;
+		const noise = identity.online && Number.isFinite(Number(peer.noise)) ? Number(peer.noise) : null;
+		const snr = signal !== null && noise !== null ? signal - noise : null;
+		const temperature = identity.online && Number.isFinite(Number(identity.temperature)) ? Number(identity.temperature) : null;
+		const outages = apOutages.get(identity.mac) || [];
+		const latestRecovery = outages.length ? outages[outages.length - 1].duration / 1000 : null;
+		const camera = identity.camera;
+		const cameraName = camera
+			? cameraProfile(camera.mac).name || camera.fallbackName || identity.name
+			: _('No camera assigned');
+		const cameraIP = camera && (camera.fixedIP || camera.ip);
+		const signalClass = signal === null ? '' : signal >= -65 ? ' camera-metric-good' : signal >= -75 ? ' camera-metric-warn' : ' camera-metric-bad';
+		const tempClass = temperature === null ? '' : temperature >= 85 ? ' camera-metric-bad' : temperature >= 75 ? ' camera-metric-warn' : ' camera-metric-good';
+		return E('tr', {}, [
+			E('td', { 'data-label':_('Client → camera') }, E('div', { class:'camera-link-name' }, [
+				cameraIcon('camera'),
+				E('div', { class:'camera-link-name-text' }, [
+					E('strong', { title:cameraName }, cameraName),
+					cameraIP
+						? E('small', { title:`${identity.mac} → ${cameraIP}` }, [
+							`${identity.mac.slice(-8)} → `,
+							E('a', { href:`http://${cameraIP}/`, target:'_blank', rel:'noopener', title:_('Open camera Web UI') }, cameraIP)
+						])
+						: E('small', { title:identity.mac }, identity.mac.slice(-8))
+				])
+			])),
+			E('td', { 'data-label':_('Status') }, E('span', { class:`camera-status-pill${identity.online ? '' : ' camera-status-pill-offline'}` }, identity.online ? _('Online') : _('Offline'))),
+			E('td', { 'data-label':_('Signal') }, E('span', { class:`camera-metric${signalClass}` }, signal === null ? '—' : `${signal} dBm`)),
+			E('td', { 'data-label':_('SNR') }, E('span', { class:'camera-metric' }, snr === null ? '—' : `${snr} dB`)),
+			E('td', { 'data-label':_('Temp') }, E('span', { class:`camera-metric${tempClass}` }, temperature === null ? '—' : `${temperature}°C`)),
+			E('td', { 'data-label':_('Boot recovery') }, E('span', { class:'camera-metric' }, formatCompactDuration(identity.recovery))),
+			E('td', { 'data-label':_('Last recovery') }, E('span', { class:'camera-metric' }, formatCompactDuration(latestRecovery))),
+			E('td', { 'data-label':_('Dropouts') }, E('span', { class:`camera-metric${outages.length ? ' camera-metric-warn' : ' camera-metric-good'}` }, String(outages.length))),
+			E('td', { 'data-label':_('Lights') }, renderRemoteClientLEDSwitch(identity, true))
+		]);
+	});
+	return E('section', { id:'camera-live-links', class:'camera-panel camera-live-panel' }, [
+		E('div', { class:'camera-panel-heading' }, [
+			E('div', { class:'camera-panel-title' }, [cameraIcon('dashboard'), E('h3', {}, _('Live link status'))]),
+			E('small', {}, _('Camera names follow automatic wired-port matching.'))
+		]),
+		rows.length ? E('div', { class:'camera-live-scroll' }, E('table', { class:'camera-live-table' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', { scope:'col' }, _('Client → camera')),
+				E('th', { scope:'col' }, _('Status')),
+				E('th', { scope:'col' }, _('Signal')),
+				E('th', { scope:'col' }, _('SNR')),
+				E('th', { scope:'col' }, _('Temp')),
+				E('th', { scope:'col' }, _('Boot recovery')),
+				E('th', { scope:'col' }, _('Last recovery')),
+				E('th', { scope:'col' }, _('Dropouts')),
+				E('th', { scope:'col' }, _('Lights'))
+			])),
+			E('tbody', {}, rows)
+		])) : E('div', { class:'camera-empty-state' }, _('Waiting for a Client to connect…'))
 	]);
 }
 
@@ -1115,7 +2117,7 @@ function renderCameraAssignments(identities, devices) {
 	const clients = Array.from(identities.values())
 		.filter(identity => identity.peer || identity.profile.remotePaired)
 		.sort((a, b) => a.name.localeCompare(b.name));
-	return E('div', { class:'cbi-section camera-device-section camera-config-only' }, [
+	return E('section', { id:'camera-connections', class:'cbi-section camera-panel camera-assignment-panel camera-config-only' }, [
 		E('div', { class:'camera-section-heading' }, [
 			E('h3', {}, _('Client → camera connections')),
 		E('small', { style:'display:block;opacity:.7;margin-top:.35rem' }, _('Pinned cameras detected on each Client wired port are matched automatically.'))
@@ -1152,6 +2154,110 @@ function renderCameraAssignments(identities, devices) {
 	]);
 }
 
+function renderCameraAddressSlots(devices) {
+	const pinnedByMac = new Map();
+	for (const section of uci.sections('camera_network', 'camera') || []) {
+		const mac = normalizeMac(section.mac);
+		if (mac && section.pinned === '1')
+			pinnedByMac.set(mac, cameraRecord(mac, devices));
+	}
+	const pinned = Array.from(pinnedByMac.values()).sort((a, b) => {
+		const aProfile = cameraProfile(a.mac);
+		const bProfile = cameraProfile(b.mac);
+		return String(aProfile.name || a.fallbackName || a.mac).localeCompare(String(bProfile.name || b.fallbackName || b.mac));
+	});
+	const liveByMac = new Map((devices || []).filter(device => device.current)
+		.map(device => [normalizeMac(device.mac), device]));
+
+	const cards = cameraAddressAssignments().map(slot => {
+		const assignedMac = slot.cameraMac;
+		const assigned = assignedMac ? (pinnedByMac.get(assignedMac) || cameraRecord(assignedMac, devices)) : null;
+		const profile = assigned ? cameraProfile(assignedMac) : null;
+		const name = assigned ? String(profile.name || assigned.fallbackName || assignedMac) : _('Unassigned');
+		const live = assignedMac ? liveByMac.get(assignedMac) : null;
+		const currentIP = live && live.ip ? String(live.ip) : '';
+		const lastIP = assigned && assigned.ip ? String(assigned.ip) : '';
+		const ready = Boolean(live && live.online && currentIP === slot.ip);
+		let statusClass = 'camera-address-status';
+		let status = _('Select a pinned camera for this project slot.');
+		if (assignedMac && ready) {
+			statusClass += ' camera-address-status-ready';
+			status = _('Ready at the fixed address.');
+		} else if (assignedMac && currentIP && currentIP !== slot.ip) {
+			statusClass += ' camera-address-status-pending';
+			status = _('Pending camera reconnect / DHCP renewal · current %s').format(currentIP);
+		} else if (assignedMac && currentIP === slot.ip) {
+			statusClass += ' camera-address-status-pending';
+			status = _('Address reserved · waiting for the camera to appear online.');
+		} else if (assignedMac) {
+			statusClass += ' camera-address-status-pending';
+			status = lastIP && lastIP !== slot.ip
+				? _('Waiting for camera reconnect · last seen %s').format(lastIP)
+				: _('Waiting for camera reconnect / DHCP renewal.');
+		}
+
+		const select = E('select', {
+			class:'cbi-input-select',
+			'aria-label':_('Camera assigned to %s Cam').format(slot.id),
+			change:async ev => {
+				const control = ev.currentTarget;
+				const nextMac = control.value;
+				const nextLive = liveByMac.get(normalizeMac(nextMac));
+				control.disabled = true;
+				try {
+					await setCameraAddressSlot(slot.id, nextMac, nextLive && nextLive.ip);
+				} catch (error) {
+					control.value = assignedMac;
+					control.disabled = false;
+				}
+			}
+		}, [
+			E('option', { value:'', selected:!assignedMac }, _('No camera assigned')),
+			...pinned.map(camera => {
+				const cameraProfileValue = cameraProfile(camera.mac);
+				const owner = cameraAddressSlotForMac(camera.mac);
+				const attrs = { value:camera.mac, selected:camera.mac === assignedMac };
+				const ownerLabel = owner && owner.id !== slot.id ? ` · ${_('currently %s Cam').format(owner.id)}` : '';
+				return E('option', attrs, `${cameraProfileValue.name || camera.fallbackName || camera.mac} · ${camera.mac}${ownerLabel}`);
+			})
+		]);
+		select.value = assignedMac;
+
+		return E('article', { class:'camera-address-card' }, [
+			E('div', { class:'camera-address-slot', 'aria-hidden':'true' }, slot.id),
+			E('div', { class:'camera-address-main' }, [
+				E('div', { class:'camera-address-heading' }, [
+					E('strong', { title:name }, `${slot.id} Cam · ${name}`),
+					E('a', {
+						class:'camera-address-link',
+						href:`http://${slot.ip}/`,
+						target:'_blank',
+						rel:'noopener',
+						title:_('Open %s Cam WebUI at %s').format(slot.id, slot.ip),
+						'aria-label':_('Open %s Cam WebUI at %s').format(slot.id, slot.ip)
+					}, `${_('WebUI')} · ${slot.ip}`)
+				]),
+				select,
+				assignedMac ? E('div', { class:'camera-address-details' }, [
+					E('span', {}, _('Camera MAC')),
+					E('code', {}, assignedMac),
+					E('span', {}, `· ${_('Fixed IP')} ${slot.ip}`)
+				]) : '',
+				E('small', { class:statusClass }, status)
+			])
+		]);
+	});
+
+	return E('section', { id:'camera-addresses', class:'cbi-section camera-panel camera-address-panel camera-config-only' }, [
+		E('div', { class:'camera-panel-heading' }, [
+			E('div', { class:'camera-panel-title' }, [cameraIcon('network'), E('h3', {}, _('Camera addresses'))]),
+			E('small', {}, _('A–D are reusable project slots. Reassigning a slot releases the previous camera.'))
+		]),
+		E('div', { class:'camera-address-grid' }, cards),
+		E('small', { class:'camera-address-status', style:'margin-top:.65rem' }, _('A camera receives its new address after it renews DHCP; reconnect or restart it if the old lease remains active.'))
+	]);
+}
+
 function exportCameraConfiguration(state) {
 	const cameras = (uci.sections('camera_network', 'camera') || []).map(section => ({
 		mac: section.mac || '', name: section.name || '', note: section.note || '', pinned: section.pinned === '1',
@@ -1161,7 +2267,7 @@ function exportCameraConfiguration(state) {
 	const payload = { exportedAt:new Date().toISOString(), device:state.board.hostname || 'HaLow_AP', network:{
 		role:uci.get('wireless','default_radio1','mode'), ssid:uci.get('wireless','default_radio1','ssid'),
 		channel:uci.get('wireless','radio1','channel'), country:uci.get('wireless','radio1','country'), encryption:uci.get('wireless','default_radio1','encryption')
-	}, cameras };
+	}, cameras, slots:cameraAddressAssignments().map(slot => ({ slot:slot.id, fixedIP:slot.ip, cameraMac:slot.cameraMac || '' })) };
 	const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
 	const link = E('a', { href:url, download:`halow-camera-config-${new Date().toISOString().slice(0,10)}.json` });
 	document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -1186,14 +2292,22 @@ function importCameraConfiguration() {
 					uci.set('camera_network', section, 'mac', camera.mac);
 					uci.set('camera_network', section, 'name', camera.name || '');
 					uci.set('camera_network', section, 'note', camera.note || '');
-					uci.set('camera_network', section, 'last_ip', camera.lastIP || '');
-					uci.set('camera_network', section, 'pinned', camera.pinned ? '1' : '0');
-					uci.set('camera_network', section, 'hidden', camera.hidden ? '1' : '0');
-					uci.set('camera_network', section, 'bound_camera_mac', camera.boundCameraMac || '');
-					uci.set('camera_network', section, 'remote_leds_enabled', camera.remoteLEDS === false ? '0' : '1');
-				}
-				await uci.save(); await uci.apply(10);
-				showCameraToast(_('Configuration restored — refreshing'));
+						uci.set('camera_network', section, 'last_ip', camera.lastIP || '');
+						uci.set('camera_network', section, 'pinned', camera.pinned ? '1' : '0');
+						uci.set('camera_network', section, 'hidden', camera.hidden ? '1' : '0');
+						uci.set('camera_network', section, 'bound_camera_mac', camera.boundCameraMac || '');
+						uci.set('camera_network', section, 'remote_leds_enabled', camera.remoteLEDS === false ? '0' : '1');
+					}
+					await uci.save();
+					await uci.apply(10);
+					if (Array.isArray(payload.slots)) {
+						for (const savedSlot of payload.slots) {
+							const slot = cameraAddressSlot(savedSlot && savedSlot.slot);
+							if (!slot) continue;
+							await setCameraAddressSlot(slot.id, savedSlot.cameraMac || '', '', { silent:true, deferRefresh:true });
+						}
+					}
+					showCameraToast(_('Configuration restored — refreshing'));
 				window.setTimeout(() => window.location.reload(), 700);
 			} catch (error) { showCameraToast(_('Invalid configuration file'), true); }
 		};
@@ -1316,19 +2430,40 @@ async function filterLiveAPPeers(peers, stationStates) {
 	return checked.filter(Boolean);
 }
 
-function drawAPChart(canvas) {
+function prepareChartCanvas(canvas, fallbackWidth, fallbackHeight) {
+	const bounds = canvas.getBoundingClientRect();
+	const width = Math.max(1, Math.round(bounds.width || fallbackWidth));
+	const height = Math.max(1, Math.round(bounds.height || fallbackHeight));
+	const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+	const pixelWidth = Math.round(width * ratio);
+	const pixelHeight = Math.round(height * ratio);
+	if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+	if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+	canvas.dataset.pixelRatio = String(ratio);
 	const ctx = canvas.getContext('2d');
-	const ratio = Number(canvas.dataset.pixelRatio) || 1;
-	const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-	const colors = ['#16a078', '#3b82f6', '#f59e0b', '#e879f9', '#ef4444', '#84cc16'];
 	ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-	ctx.clearRect(0, 0, 600, 180);
-	ctx.strokeStyle = dark ? '#303640' : '#d1d1d6';
-	ctx.fillStyle = dark ? '#9ca3af' : '#64748b';
-	ctx.font = '12px -apple-system,sans-serif';
-	for (const [value, y] of [[-30, 28], [-50, 65], [-70, 103], [-90, 140]]) {
-		ctx.beginPath(); ctx.moveTo(45, y); ctx.lineTo(585, y); ctx.stroke();
-		ctx.fillText(String(value), 5, y + 4);
+	ctx.clearRect(0, 0, width, height);
+	return { ctx, width, height, ratio };
+}
+
+function drawAPChart(canvas) {
+	if (!canvas || !canvas.isConnected)
+		return;
+	const { ctx, width, height } = prepareChartCanvas(canvas, 600, 250);
+	const dark = cameraCanvasUsesDarkTheme(canvas);
+	const left = 48;
+	const right = Math.max(left + 80, width - 14);
+	const top = 18;
+	const bottom = Math.max(top + 70, height - 34);
+	ctx.strokeStyle = dark ? '#2c3632' : '#d1d1d6';
+	ctx.fillStyle = dark ? '#89968f' : '#64748b';
+	ctx.lineWidth = 1;
+	ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace';
+	ctx.textBaseline = 'middle';
+	for (const value of [-30, -50, -70, -90]) {
+		const y = top + ((-30 - value) / 60) * (bottom - top);
+		ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+		ctx.fillText(String(value), 4, y);
 	}
 	const allSamples = Array.from(apSignalSamples.values()).flat();
 	const now = Date.now();
@@ -1336,24 +2471,27 @@ function drawAPChart(canvas) {
 	const windowStart = Math.max(now - 300000, oldestSample);
 	const windowDuration = Math.max(1000, now - windowStart);
 	const collectedSeconds = Math.max(1, Math.round(windowDuration / 1000));
-	ctx.fillText(collectedSeconds >= 60 ? `${Math.floor(collectedSeconds / 60)} min ago` : `${collectedSeconds} sec ago`, 45, 168);
-	ctx.fillText('now', 557, 168);
+	const oldestLabel = collectedSeconds >= 60 ? `${Math.floor(collectedSeconds / 60)} min ago` : `${collectedSeconds} sec ago`;
+	ctx.textBaseline = 'alphabetic';
+	ctx.fillText(oldestLabel, left, height - 10);
+	const nowWidth = ctx.measureText('now').width;
+	ctx.fillText('now', right - nowWidth, height - 10);
 	Array.from(apSignalSamples.entries()).forEach(([mac, samples], seriesIndex) => {
-		const color = colors[seriesIndex % colors.length];
+		const color = stableClientColor(mac, !dark);
 		for (const outage of apOutages.get(mac) || []) {
 			if (outage.end < now - 300000)
 				continue;
-			const x1 = 45 + Math.max(0, Math.min(1, (outage.start - windowStart) / windowDuration)) * 540;
-			const x2 = 45 + Math.max(0, Math.min(1, (outage.end - windowStart) / windowDuration)) * 540;
+			const x1 = left + Math.max(0, Math.min(1, (outage.start - windowStart) / windowDuration)) * (right - left);
+			const x2 = left + Math.max(0, Math.min(1, (outage.end - windowStart) / windowDuration)) * (right - left);
 			ctx.fillStyle = `${color}24`;
-			ctx.fillRect(Math.min(x1, x2), 28, Math.max(3, Math.abs(x2 - x1)), 112);
+			ctx.fillRect(Math.min(x1, x2), top, Math.max(3, Math.abs(x2 - x1)), bottom - top);
 			ctx.fillStyle = color;
-			ctx.font = 'bold 11px -apple-system,sans-serif';
-			ctx.fillText(`${Math.max(1, Math.round(outage.duration / 1000))}s`, Math.min(x1, x2) + 3, 42 + seriesIndex * 14);
+			ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+			ctx.fillText(`${Math.max(1, Math.round(outage.duration / 1000))}s`, Math.min(x1, x2) + 3, Math.min(bottom - 5, top + 15 + seriesIndex * 14));
 		}
 		ctx.beginPath();
 		ctx.strokeStyle = color;
-		ctx.lineWidth = 3;
+		ctx.lineWidth = 2.5;
 		ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 		let started = false;
 		for (const sample of samples) {
@@ -1361,8 +2499,8 @@ function drawAPChart(canvas) {
 				started = false;
 				continue;
 			}
-			const x = 45 + Math.max(0, Math.min(1, (sample.time - windowStart) / windowDuration)) * 540;
-			const y = 140 - Math.max(0, Math.min(1, (sample.signal + 100) / 70)) * 112;
+			const x = left + Math.max(0, Math.min(1, (sample.time - windowStart) / windowDuration)) * (right - left);
+			const y = top + Math.max(0, Math.min(1, (-30 - Number(sample.signal)) / 60)) * (bottom - top);
 			if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
 		}
 		ctx.stroke();
@@ -1370,46 +2508,47 @@ function drawAPChart(canvas) {
 }
 
 function renderAPSignalHistory(identities) {
-	const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-	const canvas = E('canvas', { class: 'camera-chart camera-chart-ap', width: Math.round(600 * ratio), height: Math.round(180 * ratio), 'data-pixel-ratio': ratio });
-	const entries = Array.from(apSignalSamples.entries());
+	const canvas = E('canvas', { class:'camera-chart camera-chart-ap', width:600, height:250, 'aria-label':_('Client signal history chart, signal strength in dBm over the last five minutes') });
+	const entries = Array.from(apSignalSamples.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 	const ready = entries.some(entry => entry[1].length >= 2);
 	if (ready)
 		window.requestAnimationFrame(() => drawAPChart(canvas));
-	const colors = ['#16a078', '#3b82f6', '#f59e0b', '#e879f9', '#ef4444', '#84cc16'];
-	return E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
-		E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
-			E('h3', {}, _('Client signal history — last 5 minutes')),
-			E('div', { style: 'display:flex;gap:.8rem;flex-wrap:wrap;font-size:.82rem;font-weight:700' }, entries.map((entry, index) => {
+	return E('section', { id:'camera-signal-history', class:'camera-panel camera-chart-panel' }, [
+		E('div', { class:'camera-panel-heading' }, [
+			E('div', { class:'camera-panel-title' }, [cameraIcon('chart'), E('h3', {}, _('Signal history · 5 minutes'))]),
+			E('div', { class:'camera-chart-legend' }, entries.map(entry => {
 					const clientMac = normalizeMac(entry[0]);
 					const name = clientDisplayName(clientMac, true, identities);
-				return E('span', { style: `color:${colors[index % colors.length]}` }, `● ${name}`);
+					const color = stableClientColor(clientMac);
+				return E('span', { title:name }, [E('i', { class:'camera-legend-dot', style:`color:${color}` }), E('span', {}, name)]);
 			}))
 		]),
-		ready ? canvas : E('p', {}, E('em', {}, _('Collecting samples… the curve appears after two refreshes.'))),
-		E('small', { class:'camera-chart-note', style: 'display:block;opacity:.7;margin-top:.5rem' }, _('Shaded gaps mark signal loss. The number shows how long reconnection took.'))
+		ready ? E('div', { class:'camera-chart-frame' }, canvas) : E('div', { class:'camera-empty-state' }, _('Collecting samples… the curve appears after two refreshes.')),
+		E('div', { class:'camera-chart-summary' }, [
+			E('span', {}, _('Shaded gaps mark signal loss.')),
+			E('strong', {}, _('Healthy signal: −65 dBm or higher'))
+		])
 	]);
 }
 
 function drawChart(canvas) {
-	const ctx = canvas.getContext('2d');
-	const pixelRatio = Number(canvas.dataset.pixelRatio) || 1;
-	const darkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-	ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-	ctx.clearRect(0, 0, 600, 165);
+	if (!canvas || !canvas.isConnected)
+		return;
+	const { ctx, width, height } = prepareChartCanvas(canvas, 600, 220);
+	const darkMode = cameraCanvasUsesDarkTheme(canvas);
+	const left = 48, right = Math.max(left + 80, width - 14), top = 18, bottom = Math.max(top + 70, height - 28);
 	ctx.strokeStyle = darkMode ? '#303640' : '#dbe3ed';
 	ctx.lineWidth = 1;
-	for (const y of [30, 85, 140]) {
+	for (const value of [-30, -65, -100]) {
+		const y = top + ((-30 - value) / 70) * (bottom - top);
 		ctx.beginPath();
-		ctx.moveTo(45, y);
-		ctx.lineTo(580, y);
+		ctx.moveTo(left, y);
+		ctx.lineTo(right, y);
 		ctx.stroke();
+		ctx.fillStyle = darkMode ? '#9ca3af' : '#64748b';
+		ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace';
+		ctx.fillText(String(value), 4, y + 4);
 	}
-	ctx.fillStyle = darkMode ? '#9ca3af' : '#64748b';
-	ctx.font = '12px sans-serif';
-	ctx.fillText('-30', 4, 35);
-	ctx.fillText('-65', 4, 90);
-	ctx.fillText('-100', 4, 145);
 	const drawLine = (key, min, max, color, width) => {
 		ctx.beginPath();
 		ctx.strokeStyle = color;
@@ -1421,8 +2560,8 @@ function drawChart(canvas) {
 			const value = Number(sample[key]);
 			if (!Number.isFinite(value))
 				return;
-			const x = 45 + index * (535 / Math.max(1, signalSamples.length - 1));
-			const y = 140 - Math.max(0, Math.min(1, (value - min) / (max - min))) * 110;
+			const x = left + index * ((right - left) / Math.max(1, signalSamples.length - 1));
+			const y = bottom - Math.max(0, Math.min(1, (value - min) / (max - min))) * (bottom - top);
 			if (!started) {
 				ctx.moveTo(x, y);
 				started = true;
@@ -1437,12 +2576,11 @@ function drawChart(canvas) {
 }
 
 function renderSignalHistory() {
-	const pixelRatio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
 	const canvas = E('canvas', {
 		class: 'camera-chart camera-chart-client',
-		width: Math.round(600 * pixelRatio),
-		height: Math.round(165 * pixelRatio),
-		'data-pixel-ratio': pixelRatio
+		width:600,
+		height:220,
+		'aria-label':_('Signal and SNR history chart for the last five minutes')
 	});
 	if (signalSamples.length >= 2)
 		window.requestAnimationFrame(() => drawChart(canvas));
@@ -1456,7 +2594,7 @@ function renderSignalHistory() {
 		]),
 		signalSamples.length < 2
 			? E('p', {}, E('em', {}, _('Collecting samples…')))
-			: canvas
+			: E('div', { class:'camera-chart-frame' }, canvas)
 	]);
 }
 
@@ -1578,20 +2716,22 @@ async function testLatency(ip, output, button) {
 	}
 }
 
-function latencyControl(ip) {
+function latencyControl(ip, compact) {
 	const previous = latencyResults.get(ip);
-	const output = E('strong', { style: `display:inline-block;min-width:5rem;color:${previous ? previous.color : 'inherit'}` }, previous ? previous.text : '—');
+	const output = E('strong', { style:`display:inline-block;min-width:${compact ? '2.5rem' : '5rem'};color:${previous ? previous.color : 'inherit'}` }, previous ? previous.text : '—');
 	const button = E('button', {
-		class: 'cbi-button cbi-button-action cbi-button-inline',
-		click: (ev) => testLatency(ip, output, ev.currentTarget)
-	}, _('Test'));
-	return E('div', { style: 'display:flex;align-items:center;gap:.5rem;white-space:nowrap' }, [output, button]);
+		class:'cbi-button cbi-button-action cbi-button-inline',
+		title:_('Test latency'),
+		'aria-label':_('Test latency'),
+		click:ev => testLatency(ip, output, ev.currentTarget)
+	}, compact ? [cameraIcon('signal'), E('span', { class:'camera-action-label' }, _('Test'))] : _('Test'));
+	return E('div', { style:'display:flex;align-items:center;gap:.4rem;white-space:nowrap' }, [output, button]);
 }
 
 function deviceDetails(mac, source) {
 	const attrs = {
-		class: 'camera-device-details',
-		toggle: (ev) => {
+		class:'camera-device-details',
+		toggle:ev => {
 			if (ev.currentTarget.open)
 				openDeviceDetails.add(mac);
 			else
@@ -1601,7 +2741,7 @@ function deviceDetails(mac, source) {
 	if (openDeviceDetails.has(mac))
 		attrs.open = '';
 	return E('details', attrs, [
-		E('summary', {}, _('Details')),
+		E('summary', { title:_('Device details'), 'aria-label':_('Device details') }, [cameraIcon('more'), E('span', { class:'camera-action-label' }, _('Details'))]),
 		E('dl', {}, [
 			E('dt', {}, _('MAC address')),
 			E('dd', {}, valueOrDash(mac)),
@@ -1613,72 +2753,124 @@ function deviceDetails(mac, source) {
 
 function renderDeviceTable(leases, hints, selfIPs, bridgePorts, identities) {
 	const devices = discoveredDevices(leases, hints, selfIPs, bridgePorts);
-	const tableHost = E('div', { class: 'camera-device-card-grid' });
+	const tableHost = E('div', { class:'camera-device-table-scroll camera-table-scroll' });
 	const renderRows = () => {
 		const query = deviceView.query.trim().toLowerCase();
-		const visible = devices.map(device => ({ ...device, profile: cameraProfile(device.mac) }))
+		const visible = devices.map(device => {
+			const profile = cameraProfile(device.mac);
+			const addressSlot = cameraAddressSlotForMac(device.mac);
+			return { ...device, profile, addressSlot, displayIP:addressSlot ? addressSlot.ip : device.ip };
+		})
 			.filter(device => deviceView.filter === 'hidden' ? device.profile.hidden : !device.profile.hidden)
 			.filter(device => deviceView.filter !== 'pinned' || device.profile.pinned)
-			.filter(device => !query || [device.profile.name, device.fallbackName, device.profile.note, device.ip, device.mac]
+			.filter(device => !query || [device.profile.name, device.fallbackName, device.profile.note, device.ip, device.displayIP, device.mac]
 				.some(value => String(value || '').toLowerCase().includes(query)))
 			.sort((a, b) => Number(b.profile.pinned) - Number(a.profile.pinned));
-		const cards = visible.map(device => {
-			const tested = latencyResults.get(device.ip);
+		const rows = visible.map(device => {
+			const tested = latencyResults.get(device.displayIP);
 			const clientIdentity = identities && identities.get(normalizeMac(device.mac));
-			const effectiveOnline = clientIdentity ? clientIdentity.online : (tested ? tested.text !== _('No reply') : device.online);
-			return E('div', { class:'cbi-section camera-device-card' }, [
-			E('div', { class:'camera-device-card-head' }, [
-				E('button', {
-				class: `cbi-button camera-pin${device.profile.pinned ? ' camera-pin-active' : ''}`,
-				title: device.profile.pinned ? _('Unpin camera') : _('Pin camera'),
-				click: async () => { await toggleCameraPin(device.mac, device.ip); updateFilterButtons(); renderRows(); }
-				}, device.profile.pinned ? '★' : '☆'),
-				E('a', { class:'camera-device-card-name', href:`http://${device.ip}/`, target:'_blank', rel:'noopener' }, valueOrDash(device.profile.name || device.fallbackName)),
-				statusBadge(effectiveOnline)
-			]),
-			E('div', { class:'camera-device-card-ip' }, valueOrDash(device.ip)),
-			device.profile.note ? E('small', { style:'display:block;margin-bottom:.5rem' }, device.profile.note) : '',
-			E('div', { class:'camera-device-card-actions' }, [
-				latencyControl(device.ip),
+			const baseOnline = clientIdentity ? clientIdentity.online : (tested ? tested.text !== _('No reply') : device.online);
+			const addressPending = Boolean(device.addressSlot && device.current && device.ip && device.ip !== device.displayIP);
+			const effectiveOnline = device.addressSlot ? baseOnline && !addressPending && device.ip === device.displayIP : baseOnline;
+			const peer = clientIdentity && clientIdentity.peer;
+			const signal = peer && effectiveOnline && Number.isFinite(Number(peer.signal)) ? Number(peer.signal) : null;
+			const role = clientIdentity ? _('Camera link') : device.profile.pinned ? _('Camera') : _('Network device');
+			const bridgePort = bridgePorts && bridgePorts.get(normalizeMac(device.mac));
+			const link = clientIdentity ? _('HaLow') : bridgePort ? `br-lan · ${bridgePort}` : device.source;
+			const name = valueOrDash(device.profile.name || device.fallbackName);
+			const signalClass = signal === null ? '' : signal >= -65 ? ' camera-metric-good' : signal >= -75 ? ' camera-metric-warn' : ' camera-metric-bad';
+			const pin = E('button', {
+				class:`cbi-button camera-pin${device.profile.pinned ? ' camera-pin-active' : ''}`,
+				title:device.profile.pinned ? _('Unpin camera') : _('Pin camera'),
+				'aria-label':device.profile.pinned ? _('Unpin camera') : _('Pin camera'),
+				click:async () => { await toggleCameraPin(device.mac, device.ip); }
+			}, cameraIcon('pin'));
+			const actions = E('div', { class:'camera-device-actions' }, [
+				latencyControl(device.displayIP, true),
 				deviceDetails(device.mac, device.source),
-				E('button', { class:'cbi-button cbi-button-edit', click:() => editCameraProfile(device.mac, device.ip, device.fallbackName) }, _('Edit')),
+				E('button', { class:'cbi-button cbi-button-edit', title:_('Edit camera profile'), 'aria-label':_('Edit camera profile'), click:() => editCameraProfile(device.mac, device.ip, device.fallbackName) }, [cameraIcon('edit'), E('span', { class:'camera-action-label' }, _('Edit'))]),
 				deviceView.filter === 'hidden'
-					? E('button', { class:'cbi-button', click:async() => { const section=cameraSection(device.mac); uci.set('camera_network', section, 'hidden', '0'); await uci.save(); await uci.apply(10); showCameraToast(_('Device restored')); updateFilterButtons(); renderRows(); } }, _('Restore'))
-					: E('button', { class:'cbi-button', click:async() => { await hideCameraDevice(device.mac, device.ip); updateFilterButtons(); renderRows(); } }, _('Hide'))
-			])
-		]);
+					? E('button', { class:'cbi-button', title:_('Restore device'), 'aria-label':_('Restore device'), click:async() => { const section=cameraSection(device.mac); uci.set('camera_network', section, 'hidden', '0'); await uci.save(); await uci.apply(10); showCameraToast(_('Device restored')); if (requestDashboardRefresh) await requestDashboardRefresh(); } }, [cameraIcon('undo'), E('span', { class:'camera-action-label' }, _('Restore'))])
+					: E('button', { class:'cbi-button', title:_('Hide device'), 'aria-label':_('Hide device'), click:async() => { await hideCameraDevice(device.mac, device.ip); } }, [cameraIcon('hide'), E('span', { class:'camera-action-label' }, _('Hide'))])
+			]);
+			return E('tr', {}, [
+				E('td', { 'data-label':_('Pin') }, pin),
+				E('td', { 'data-label':_('Name') }, E('div', { class:'camera-device-primary' }, [
+					cameraIcon(clientIdentity ? 'signal' : device.profile.pinned ? 'camera' : 'devices'),
+					E('div', { style:'min-width:0' }, [
+						E('a', { href:`http://${device.displayIP}/`, target:'_blank', rel:'noopener', title:name }, name),
+						device.profile.note ? E('small', { class:'camera-device-role', title:device.profile.note }, device.profile.note) : E('small', { class:'camera-device-role' }, role)
+					])
+				])),
+				E('td', { 'data-label':_('Role') }, role),
+				E('td', { 'data-label':_('IP address'), class:'camera-device-ip' }, device.displayIP
+					? E('a', { href:`http://${device.displayIP}/`, target:'_blank', rel:'noopener', title:_('Open camera Web UI') }, `${device.addressSlot ? `${device.addressSlot.id} · ` : ''}${device.displayIP}`)
+					: '—'),
+				E('td', { 'data-label':_('Link / port') }, link),
+				E('td', { 'data-label':_('Signal') }, E('span', { class:`camera-metric${signalClass}` }, signal === null ? '—' : `${signal} dBm`)),
+				E('td', { 'data-label':_('Status') }, E('span', {
+					class:`camera-status-pill${effectiveOnline ? '' : addressPending ? ' camera-status-pill-pending' : ' camera-status-pill-offline'}`,
+					title:addressPending ? _('Current lease: %s').format(device.ip) : ''
+				}, effectiveOnline ? _('Online') : addressPending ? _('Pending DHCP') : _('Offline'))),
+				E('td', { 'data-label':_('Actions') }, actions)
+			]);
 		});
-		tableHost.replaceChildren(...(cards.length ? cards : [E('p', {}, E('em', {}, _('No matching devices.')))]));
+		tableHost.replaceChildren(rows.length ? E('table', { class:'camera-device-table' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', { scope:'col' }, _('Pin')),
+				E('th', { scope:'col' }, _('Name')),
+				E('th', { scope:'col' }, _('Role')),
+				E('th', { scope:'col' }, _('IP address')),
+				E('th', { scope:'col' }, _('Link / port')),
+				E('th', { scope:'col' }, _('Signal')),
+				E('th', { scope:'col' }, _('Status')),
+				E('th', { scope:'col' }, _('Actions'))
+			])),
+			E('tbody', {}, rows)
+		]) : E('div', { class:'camera-empty-state' }, _('No matching devices.')));
 	};
 	const search = E('input', {
-		type: 'search',
-		placeholder: _('Search name, IP or MAC'),
-		value: deviceView.query,
-		input: (ev) => { deviceView.query = ev.currentTarget.value; renderRows(); }
+		type:'search',
+		'aria-label':_('Search discovered devices'),
+		placeholder:_('Search name, IP or MAC'),
+		value:deviceView.query,
+		input:ev => { deviceView.query = ev.currentTarget.value; renderRows(); }
 	});
-	const filterGroup = E('div', { class: 'camera-filter-group' });
+	const filterGroup = E('div', { class:'camera-filter-group' });
 	const updateFilterButtons = () => {
 		const pinnedCount = devices.filter(device => cameraProfile(device.mac).pinned && !cameraProfile(device.mac).hidden).length;
 		const visibleCount = devices.filter(device => !cameraProfile(device.mac).hidden).length;
 		const hiddenCount = devices.length - visibleCount;
 		filterGroup.replaceChildren(
-			E('button', {
-				class: `cbi-button camera-filter-button${deviceView.filter === 'all' ? ' camera-filter-button-active' : ''}`,
-				click: () => { deviceView.filter = 'all'; updateFilterButtons(); renderRows(); }
-			}, `${_('All devices')} (${visibleCount})`),
-			E('button', {
-				class: `cbi-button camera-filter-button${deviceView.filter === 'pinned' ? ' camera-filter-button-active' : ''}`,
-				click: () => { deviceView.filter = 'pinned'; updateFilterButtons(); renderRows(); }
-			}, `${_('Pinned only')} (${pinnedCount})`),
-			E('button', {
-				class:`cbi-button camera-filter-button${deviceView.filter === 'hidden' ? ' camera-filter-button-active' : ''}`,
-				click:() => { deviceView.filter='hidden'; updateFilterButtons(); renderRows(); }
-			}, `${_('Hidden')} (${hiddenCount})`)
+			E('button', { class:`cbi-button camera-filter-button${deviceView.filter === 'all' ? ' camera-filter-button-active' : ''}`, click:() => { deviceView.filter='all'; updateFilterButtons(); renderRows(); } }, `${_('All devices')} (${visibleCount})`),
+			E('button', { class:`cbi-button camera-filter-button${deviceView.filter === 'pinned' ? ' camera-filter-button-active' : ''}`, click:() => { deviceView.filter='pinned'; updateFilterButtons(); renderRows(); } }, `${_('Pinned only')} (${pinnedCount})`),
+			E('button', { class:`cbi-button camera-filter-button${deviceView.filter === 'hidden' ? ' camera-filter-button-active' : ''}`, click:() => { deviceView.filter='hidden'; updateFilterButtons(); renderRows(); } }, `${_('Hidden')} (${hiddenCount})`)
 		);
 	};
 	updateFilterButtons();
 	renderRows();
-	return E('div', {}, [E('div', { class: 'camera-device-tools' }, [search, filterGroup]), tableHost]);
+	return E('div', {}, [E('div', { class:'camera-device-tools' }, [E('div', { class:'camera-search-wrap' }, [cameraIcon('search'), search]), filterGroup]), tableHost]);
+}
+
+function redrawCameraCharts(root) {
+	window.requestAnimationFrame(() => {
+		root.querySelectorAll('canvas.camera-chart-ap').forEach(canvas => drawAPChart(canvas));
+		root.querySelectorAll('canvas.camera-chart:not(.camera-chart-ap)').forEach(canvas => drawChart(canvas));
+	});
+}
+
+function renderAPToolbar(state, root) {
+	return E('header', { class:'camera-main-toolbar' }, [
+		E('div', { class:'camera-main-heading' }, [
+			E('h2', {}, _('LIVE CAMERA NETWORK')),
+			E('small', {}, `${state.board.hostname || _('Access point')} · ${_('Updated')} ${new Date().toLocaleTimeString()}`)
+		]),
+		E('div', { class:'camera-main-actions' }, [
+			E('button', { class:'cbi-button camera-monitor-button', title:_('Toggle monitor mode'), 'aria-label':_('Toggle monitor mode'), click:() => toggleMonitorMode(root) }, [cameraIcon('dashboard'), E('span', {}, root.classList.contains('camera-monitor-mode') ? _('Exit monitor') : _('Monitor'))]),
+			E('button', { class:'cbi-button camera-config-only camera-export-button', title:_('Export configuration'), 'aria-label':_('Export configuration'), click:() => exportCameraConfiguration(state) }, [cameraIcon('download'), E('span', {}, _('Export'))]),
+			E('button', { class:'cbi-button camera-config-only camera-export-button', title:_('Import configuration'), 'aria-label':_('Import configuration'), click:importCameraConfiguration }, [cameraIcon('upload'), E('span', {}, _('Import'))])
+		])
+	]);
 }
 
 return view.extend({
@@ -1721,6 +2913,7 @@ return view.extend({
 
 		let boot = {};
 		try { boot = JSON.parse(bootText || '{}'); } catch (e) {}
+		syncLEDState(boot);
 		return { board, systemInfo, leases, hints, halow, selfIPs, boot, bridgePorts: parseBridgeFDB(bridgeFDB), linkHistory: parseLinkHistory(linkLog) };
 	},
 
@@ -1731,6 +2924,37 @@ return view.extend({
 	render(data) {
 		applySavedSidebarState();
 		const root = E('div', { class: 'camera-dashboard' }, []);
+		try { window.localStorage.removeItem('cameraTheme'); } catch (error) {}
+		applyCameraSystemTheme(root);
+		const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+		const syncSystemTheme = () => {
+			applyCameraSystemTheme(root);
+			redrawCameraCharts(root);
+		};
+		if (themeMedia.addEventListener)
+			themeMedia.addEventListener('change', syncSystemTheme);
+		else if (themeMedia.addListener)
+			themeMedia.addListener(syncSystemTheme);
+		let viewObserver = null;
+		const releaseViewState = () => {
+			if (themeMedia.removeEventListener)
+				themeMedia.removeEventListener('change', syncSystemTheme);
+			else if (themeMedia.removeListener)
+				themeMedia.removeListener(syncSystemTheme);
+			if (viewObserver)
+				viewObserver.disconnect();
+			document.body.classList.remove('camera-console-active', 'camera-sidebar-hidden', 'camera-theme-light', 'camera-theme-dark');
+			delete document.body.dataset.cameraTheme;
+		};
+		window.requestAnimationFrame(() => {
+			if (!root.isConnected)
+				return;
+			viewObserver = new MutationObserver(() => {
+				if (!root.isConnected)
+					releaseViewState();
+			});
+			viewObserver.observe(document.body, { childList:true, subtree:true });
+		});
 		let interactionHoldUntil = 0;
 		let deviceScrollLeft = 0;
 		root.addEventListener('touchstart', () => { interactionHoldUntil = Date.now() + 1500; }, { passive:true });
@@ -1738,9 +2962,10 @@ return view.extend({
 		root.addEventListener('touchend', () => { interactionHoldUntil = Date.now() + 800; }, { passive:true });
 		root.addEventListener('touchcancel', () => { interactionHoldUntil = Date.now() + 500; }, { passive:true });
 		root.classList.toggle('camera-monitor-mode', window.localStorage.getItem('cameraMonitorMode') === '1');
-		const renderData = (state) => {
+		const renderData = (state, force) => {
 			const peer = state.halow && state.halow.peer;
 			const isAP = state.halow && state.halow.role === 'ap';
+			root.classList.toggle('camera-ap-dashboard', isAP);
 			const displayPeers = isAP ? APDisplayPeers(state.halow.peers) : [];
 			const devices = discoveredDevices(state.leases, state.hints, state.selfIPs, state.bridgePorts);
 			const identities = isAP ? buildClientIdentities(displayPeers, state.halow.peers, devices, state.boot) : new Map();
@@ -1758,19 +2983,12 @@ return view.extend({
 				? state.linkHistory.bootLinkSeconds
 				: (Number.isFinite(connectedTime) ? Math.max(0, uptime - connectedTime) : null);
 			const activeControl = document.activeElement;
-			const preserveInteraction = (root.contains(activeControl) && /^(INPUT|SELECT|TEXTAREA)$/.test(activeControl.tagName)) || Date.now() < interactionHoldUntil;
-			const statusStrip = E('div', { class:`camera-status-strip${isAP ? '' : ' camera-status-strip-client'}` }, [
+			const preserveInteraction = ledOperations > 0 || (!force && ((root.contains(activeControl) && /^(INPUT|SELECT|TEXTAREA)$/.test(activeControl.tagName)) || Date.now() < interactionHoldUntil));
+			const statusStrip = E('div', { class:'camera-status-strip camera-status-strip-client' }, [
 				renderLEDControl(),
-				renderTemperaturePanel(state.boot.temperature, state.boot.thermalMitigation),
-				isAP ? renderAPSummary(state) : E([])
+				renderTemperaturePanel(state.boot.temperature, state.boot.thermalMitigation)
 			]);
-			const roleOverview = isAP
-				? E([], [
-						renderHalowClients(displayPeers, identities),
-					renderAPSignalHistory(identities),
-					renderCameraAssignments(identities, devices)
-				])
-				: E([], [
+			const clientOverview = E([], [
 					E('div', { class: 'camera-summary-grid' }, [
 						E('div', { class: 'cbi-section camera-summary-card' }, [
 							E('h3', {}, _('HaLow link')),
@@ -1794,9 +3012,30 @@ return view.extend({
 				deviceScrollLeft = oldDeviceScroll.scrollLeft;
 			const pageScroller = document.querySelector('.main-right');
 			const pageScrollY = pageScroller ? pageScroller.scrollTop : window.scrollY;
-			root.replaceChildren(
-				E('style', {}, dashboardStyles),
-				E('div', { class: 'camera-console-bar' }, [
+			const buildDeviceSection = () => E('section', { id:'camera-devices', class:`cbi-section camera-device-section camera-config-only${isAP ? ' camera-panel camera-ops-devices' : ''}` }, [
+				E('div', { class:'camera-section-heading', style:'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
+					E('div', { class:isAP ? 'camera-panel-title' : '' }, [isAP ? cameraIcon('devices') : E([]), E('h3', {}, _('Discovered devices'))]),
+					E('small', { style:'opacity:.7' }, `${_('Updated')} ${new Date().toLocaleTimeString()}`)
+				]),
+				renderDeviceTable(state.leases, state.hints, state.selfIPs, state.bridgePorts, identities)
+			]);
+			const pageContent = isAP ? E('div', { class:'camera-ops-shell' }, [
+				renderAPSidebar(state, devices, identities),
+				E('main', { class:'camera-ops-main' }, [
+					renderAPToolbar(state, root),
+					temperatureAlert,
+					remoteTemperatureAlert,
+					linkAlert,
+						deviceAlert,
+						renderLiveLinkStatus(identities),
+						renderAPSignalHistory(identities),
+						renderCameraAssignments(identities, devices),
+						renderCameraAddressSlots(devices),
+						buildDeviceSection(),
+					E('p', { class:'camera-side-footer', style:'margin:.65rem 0 0' }, _('Camera network telemetry refreshes every 2 seconds.'))
+				])
+			]) : E([], [
+				E('div', { class:'camera-console-bar' }, [
 					E('button', { class: 'cbi-button camera-sidebar-toggle', title: _('Open or close sidebar'), click: toggleSidebar }, '☰'),
 					E('div', { class: 'camera-console-title' }, [
 						E('div', {}, [
@@ -1805,34 +3044,24 @@ return view.extend({
 						])
 					]),
 					E('div', { class: 'camera-toolbar-actions' }, [
-						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:() => exportCameraConfiguration(state) }, _('Export')) : E([]),
-						isAP ? E('button', { class:'cbi-button camera-config-only camera-export-button', click:importCameraConfiguration }, _('Import')) : E([]),
-						isAP ? E('button', { class:'cbi-button camera-monitor-button', click:() => toggleMonitorMode(root) }, root.classList.contains('camera-monitor-mode') ? _('Exit monitor') : _('Monitor')) : E([]),
 						E('span', { class: 'camera-live-dot' }),
 						E('span', { class: 'camera-console-subtitle camera-live-label' }, _('Live'))
 					])
 				]),
-			isAP ? renderReadiness(state.halow.peers, devices, identities) : E([]),
 				statusStrip,
 				temperatureAlert,
-				remoteTemperatureAlert,
 				linkAlert,
 				deviceAlert,
-				roleOverview,
-				isAP ? renderBootRecovery(state.boot, identities) : E([]),
-				E('div', { class: 'cbi-section camera-device-section camera-config-only' }, [
-					E('div', { class: 'camera-section-heading', style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' }, [
-						E('h3', {}, _('Discovered devices')),
-						E('small', { style: 'opacity:.7' }, `${_('Updated')} ${new Date().toLocaleTimeString()}`)
-					]),
-					renderDeviceTable(state.leases, state.hints, state.selfIPs, state.bridgePorts, identities)
-				]),
-				isAP ? E([]) : E('div', { class: 'cbi-section', style: 'padding:1rem' }, [
+				clientOverview,
+				buildDeviceSection(),
+				E('div', { class:'cbi-section', style:'padding:1rem' }, [
 					E('h3', {}, _('HaLow connection history — this boot')),
 					renderLinkHistory(state.linkHistory)
 				]),
 				E('p', { style: 'opacity:.7' }, _('Camera network telemetry refreshes every 2 seconds.'))
-			);
+			]);
+			preserveLEDBrightness(root, pageContent);
+			root.replaceChildren(E('style', {}, dashboardStyles), pageContent);
 			window.requestAnimationFrame(() => {
 				const newDeviceScroll = root.querySelector('.camera-table-scroll');
 				if (newDeviceScroll)
@@ -1846,9 +3075,16 @@ return view.extend({
 		};
 
 		renderData(data);
+		requestDashboardRefresh = async () => {
+			try {
+				renderData(await this.collect(), true);
+			} catch (error) {
+				console.error('Camera Network refresh failed', error);
+			}
+		};
 		poll.add(async () => {
 			try {
-				renderData(await this.collect());
+				renderData(await this.collect(), false);
 			} catch (error) {
 				console.error('Camera Network refresh failed', error);
 			}

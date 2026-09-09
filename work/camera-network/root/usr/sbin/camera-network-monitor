@@ -63,24 +63,30 @@ cache_file_for_mac() {
 }
 
 write_state() {
-	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s,"clientRecoveries":%s,"clientTelemetry":%s}\n' \
+	local LED_ENABLED
+	LED_ENABLED=true
+	[ "$(uci -q get camera_network.settings.leds_enabled)" = 0 ] && LED_ENABLED=false
+	printf '{"ap":%s,"client":%s,"camera":%s,"temperature":%s,"thermalMitigation":%s,"clientTemperatures":%s,"clientRecoveries":%s,"clientTelemetry":%s,"ledsEnabled":%s}\n' \
 		"$AP_READY" "${CLIENT_READY:-null}" "${CAMERA_READY:-null}" "${TEMPERATURE:-null}" "${THERMAL_MITIGATION:-0}" \
-		"$CLIENT_TEMPERATURES" "$CLIENT_RECOVERIES" "$CLIENT_TELEMETRY" > "$OUT.tmp"
+		"$CLIENT_TEMPERATURES" "$CLIENT_RECOVERIES" "$CLIENT_TELEMETRY" "$LED_ENABLED" > "$OUT.tmp"
 	mv "$OUT.tmp" "$OUT"
 }
 
 collect_one_client() {
 	local EXPECTED_MAC IP CACHE RAW TMP SSH_PID WATCHDOG SSH_STATUS STATS REMOTE_MAC BOOT_ID LINK_SECONDS
 	local OLD_BOOT RECOVERY TEMPERATURE_VALUE MITIGATION WIRED_MACS WIRE
+	local LED_ENABLED SAMPLED_AT
 	EXPECTED_MAC="$1"
 	IP="$2"
 	CACHE="$3"
 	RAW="${CACHE}.$$.raw"
 	TMP="${CACHE}.$$.tmp"
+	SAMPLED_AT=$(date +%s)
 
 	ssh -q -y -I 4 -i /etc/dropbear/camera-network-client-key "root@$IP" '
 		CLIENT_MAC=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr "a-f" "A-F")
 		echo "__CLIENT_MAC__=$CLIENT_MAC"
+		echo "__LEDS_ENABLED__=$(uci -q get camera_network.settings.leds_enabled)"
 		echo "__BOOT_ID__=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 		echo "__LINK_SECONDS__=$(dmesg 2>/dev/null | sed -n "s/^\[[[:space:]]*\([0-9][0-9.]*\)\].*wlan0: associated.*/\1/p" | head -n1)"
 		for MEMBER in /sys/class/net/br-lan/brif/*; do
@@ -141,7 +147,9 @@ collect_one_client() {
 		WIRED_MACS="${WIRED_MACS}${WIRED_MACS:+ }${WIRE}"
 	done
 
-	printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$BOOT_ID" "$RECOVERY" "$TEMPERATURE_VALUE" "$MITIGATION" "$IP" "$WIRED_MACS" > "$TMP"
+	LED_ENABLED=$(printf '%s\n' "$STATS" | sed -n 's/^__LEDS_ENABLED__=//p' | head -n1)
+	case "$LED_ENABLED" in 0|1) ;; *) LED_ENABLED= ;; esac
+	printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$BOOT_ID" "$RECOVERY" "$TEMPERATURE_VALUE" "$MITIGATION" "$IP" "$WIRED_MACS" "$LED_ENABLED" "$SAMPLED_AT" > "$TMP"
 	mv "$TMP" "$CACHE"
 }
 
@@ -167,6 +175,8 @@ sample_client_telemetry() {
 }
 
 build_client_json() {
+	local LED_ENABLED LED_SAMPLE LED_JSON NOW_EPOCH
+	NOW_EPOCH=$(date +%s)
 	local ASSOCIATED SECTION MAC IP CACHE ONLINE TEMP MITIGATION RECOVERY WIRED_MACS WIRE
 	local TEMP_JSON TEMP_COMMA RECOVERY_JSON RECOVERY_COMMA TELEMETRY_JSON TELEMETRY_COMMA WIRED_JSON WIRED_COMMA
 	ASSOCIATED=$(iwinfo wlan0 assoclist 2>/dev/null | tr 'a-f' 'A-F')
@@ -185,6 +195,15 @@ build_client_json() {
 		MITIGATION=$(sed -n '4p' "$CACHE" 2>/dev/null)
 		RECOVERY=$(sed -n '2p' "$CACHE" 2>/dev/null)
 		WIRED_MACS=$(sed -n '6p' "$CACHE" 2>/dev/null)
+		LED_ENABLED=$(sed -n '7p' "$CACHE" 2>/dev/null)
+		LED_SAMPLE=$(sed -n '8p' "$CACHE" 2>/dev/null)
+		LED_JSON=null
+		case "$LED_SAMPLE" in
+			''|*[!0-9]*) ;;
+			*) if [ "$NOW_EPOCH" -ge "$LED_SAMPLE" ] && [ $((NOW_EPOCH - LED_SAMPLE)) -le 15 ]; then
+				case "$LED_ENABLED" in 0) LED_JSON=false ;; 1) LED_JSON=true ;; esac
+			fi ;;
+		esac
 		case "$TEMP" in ''|*[!0-9-]*) TEMP_JSON_VALUE=null ;; *) TEMP_JSON_VALUE="$TEMP" ;; esac
 		case "$MITIGATION" in ''|*[!0-9]*) MITIGATION_JSON_VALUE=null ;; *) MITIGATION_JSON_VALUE="$MITIGATION" ;; esac
 		case "$RECOVERY" in ''|*[!0-9]*) RECOVERY_JSON_VALUE=null ;; *) RECOVERY_JSON_VALUE="$RECOVERY" ;; esac
@@ -205,7 +224,7 @@ build_client_json() {
 			WIRED_COMMA=,
 		done
 		WIRED_JSON="${WIRED_JSON}]"
-		TELEMETRY_JSON="${TELEMETRY_JSON}${TELEMETRY_COMMA}\"${MAC}\":{\"ip\":\"${IP}\",\"online\":${ONLINE},\"temperature\":${TEMP_JSON_VALUE},\"thermalMitigation\":${MITIGATION_JSON_VALUE},\"recovery\":${RECOVERY_JSON_VALUE},\"wiredMacs\":${WIRED_JSON}}"
+		TELEMETRY_JSON="${TELEMETRY_JSON}${TELEMETRY_COMMA}\"${MAC}\":{\"ip\":\"${IP}\",\"online\":${ONLINE},\"temperature\":${TEMP_JSON_VALUE},\"thermalMitigation\":${MITIGATION_JSON_VALUE},\"recovery\":${RECOVERY_JSON_VALUE},\"wiredMacs\":${WIRED_JSON},\"ledsEnabled\":${LED_JSON}}"
 		TELEMETRY_COMMA=,
 	done
 	CLIENT_TEMPERATURES="${TEMP_JSON}}"
@@ -261,5 +280,6 @@ while true; do
 		done
 	fi
 	write_state
+	/usr/sbin/camera-network-leds tick >/dev/null 2>&1
 	sleep 2
 done

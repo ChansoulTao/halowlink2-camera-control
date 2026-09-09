@@ -1,40 +1,117 @@
 #!/bin/sh
+set -eu
 
-mode="${1:-}"
-[ "$mode" = "apply" ] && mode="$(uci -q get camera_network.settings.leds_enabled)"
-[ "$mode" = "1" ] && mode="on"
-[ "$mode" = "0" ] && mode="off"
-[ -n "$mode" ] || mode="on"
+mode="${1:-apply}"
+value="${2:-}"
+led_root="${CAMERA_LED_SYSFS:-/sys/class/leds}"
+state="${CAMERA_LED_STATE:-/tmp/camera-network-led-state}"
+signal_led="$led_root/rgb:led0"
+status_led="$led_root/rgb:led1"
+wired_led="$led_root/rgb:led2"
 
+valid_percent() {
+	case "$1" in ''|*[!0-9]*|????*) return 1 ;; esac
+	[ "$1" -le 100 ]
+}
 case "$mode" in
-	off)
-		uci -q batch <<'EOF' || exit 1
-set camera_network.settings=led_control
-set camera_network.settings.leds_enabled='0'
-commit camera_network
-EOF
-		found=0
-		failed=0
-		for led in /sys/class/leds/*; do
-			[ -d "$led" ] || continue
-			found=1
-			[ -e "$led/trigger" ] && { printf 'none\n' > "$led/trigger" || failed=1; }
-			[ -e "$led/brightness" ] && { printf '0\n' > "$led/brightness" || failed=1; }
-		done
-		[ "$found" -eq 1 ] && [ "$failed" -eq 0 ] || exit 1
-		;;
-	on)
-		uci -q batch <<'EOF' || exit 1
-set camera_network.settings=led_control
-set camera_network.settings.leds_enabled='1'
-commit camera_network
-EOF
-		[ -x /etc/init.d/led ] || exit 1
-		# Let the firmware restore every configured trigger and brightness. Do not
-		# force an individual LED to a solid state here.
-		/etc/init.d/led restart >/dev/null 2>&1 || exit 1
-		;;
-	*) exit 1 ;;
+	on|off|toggle|apply|tick) [ "$#" -le 1 ] || exit 2 ;;
+	brightness) valid_percent "$value" && [ "$#" -eq 2 ] || exit 2 ;;
+	*) exit 2 ;;
 esac
 
+# Serialize UI operations with the monitor. The kernel releases this lock
+# even if the process is killed; no stale PID or directory lock to recover.
+exec 9>"$state.lock"
+if [ "$mode" = tick ]; then flock -n 9 || exit 0; else flock 9 || exit 1; fi
+for led in "$signal_led" "$status_led" "$wired_led"; do
+	[ -w "$led/multi_intensity" ] && [ "$(cat "$led/multi_index")" = 'red green blue' ] || exit 1
+done
+
+if [ "$mode" = toggle ]; then
+	if [ "$(uci -q get camera_network.settings.leds_enabled || true)" = 0 ]; then mode=on; else mode=off; fi
+fi
+if [ "$mode" = on ] || [ "$mode" = off ] || [ "$mode" = brightness ]; then
+	uci -q get camera_network.settings >/dev/null || uci -q set camera_network.settings=led_control
+	case "$mode" in
+		on) uci -q set camera_network.settings.leds_enabled=1 ;;
+		off) uci -q set camera_network.settings.leds_enabled=0 ;;
+		brightness) uci -q set "camera_network.settings.leds_brightness=$value" ;;
+	esac
+	uci -q commit camera_network
+fi
+enabled="$(uci -q get camera_network.settings.leds_enabled || true)"
+percent="$(uci -q get camera_network.settings.leds_brightness || true)"
+valid_percent "$percent" || percent=100
+# Normalize leading zeroes before shell arithmetic.
+percent="$(printf '%s\n' "$percent" | awk '{print $1 + 0}')"
+
+trigger_is() {
+	current="$(cat "$1/trigger")"
+	[ "$current" = "$2" ] || printf '%s\n' "$current" | grep -qF "[$2]"
+}
+dark() {
+	for led in "$led_root"/*; do
+		[ -e "$led/brightness" ] || continue
+		trigger_is "$led" none || printf 'none\n' > "$led/trigger"
+		[ "$(cat "$led/brightness")" = 0 ] || printf '0\n' > "$led/brightness"
+	done
+}
+if [ "$enabled" = 0 ] || [ "$percent" -eq 0 ]; then
+	dark
+	printf 'off\n' > "$state"
+	echo "$mode"
+	exit 0
+fi
+
+# iwinfo emits one MAC / signal line per associated station. The AP uses
+# its weakest valid Client; a Client has just its AP. No sample is not 0 dBm.
+rssi="$(iwinfo wlan0 assoclist 2>/dev/null | awk '
+	$1 ~ /^[0-9A-Fa-f:]+$/ && length($1) == 17 && $2 ~ /^-[0-9]+$/ && $3 == "dBm" && $2 >= -120 && $2 < 0 {
+		if (!seen || $2 + 0 < weakest) weakest = $2 + 0
+		seen = 1
+	}
+	END { if (seen) print weakest }
+')"
+red=0; green=255; on=0; off=0
+if [ -z "$rssi" ]; then red=255; green=0; on=100; off=1900
+elif [ "$rssi" -ge -60 ]; then :
+elif [ "$rssi" -ge -70 ]; then on=1000; off=1000
+elif [ "$rssi" -ge -80 ]; then red=255; on=500; off=500
+else red=255; green=0; on=250; off=250
+fi
+signal_trigger=default-on
+[ "$on" -eq 0 ] || signal_trigger=timer
+signature="v2:$percent:$red:$green:$on:$off"
+if [ "$mode" = tick ] && [ "$(cat "$state" 2>/dev/null || true)" = "$signature" ] &&
+	trigger_is "$signal_led" "$signal_trigger" && trigger_is "$status_led" default-on &&
+	trigger_is "$wired_led" netdev && [ "$(cat "$wired_led/device_name")" = lan ]; then
+	exit 0
+fi
+
+# Scale RGB intensities, not brightness: netdev/timer triggers restore the
+# brightness to max themselves. Always derive colors from their full values.
+color() {
+	printf '%s %s %s\n' "$(( $2 * percent / 100 ))" "$(( $3 * percent / 100 ))" "$(( $4 * percent / 100 ))" > "$1/multi_intensity"
+}
+color "$signal_led" "$red" "$green" 0
+color "$status_led" 0 0 255
+color "$wired_led" 255 0 127
+
+printf '%s\n' "$signal_trigger" > "$signal_led/trigger"
+cat "$signal_led/max_brightness" > "$signal_led/brightness"
+if [ "$signal_trigger" = timer ]; then
+	printf '%s\n' "$on" > "$signal_led/delay_on"
+	printf '%s\n' "$off" > "$signal_led/delay_off"
+fi
+printf 'default-on\n' > "$status_led/trigger"
+cat "$status_led/max_brightness" > "$status_led/brightness"
+
+# eth0 is the always-up internal switch CPU port; usblan is USB. Only the
+# physical LAN socket represents the camera/production-network cable.
+printf 'netdev\n' > "$wired_led/trigger"
+printf 'lan\n' > "$wired_led/device_name"
+printf '1\n' > "$wired_led/link"
+printf '1\n' > "$wired_led/rx"
+printf '1\n' > "$wired_led/tx"
+printf '%s\n' "$signature" > "$state"
 echo "$mode"

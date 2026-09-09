@@ -9,6 +9,10 @@ authorized_keys
 work/backups/
 work/inspection/
 work/snapshot/
+/work/firmware/
+
+# Custom firmware images are release artifacts, never source inputs.
+/outputs/firmware/
 
 # Unrelated firmware references and experimental CarChat project
 work/reference/
@@ -23,6 +27,7 @@ work/ipk-debian-binary
 outputs/*.tar.gz
 outputs/luci-app-camera-network_1.0.0-1_all.ipk
 outputs/luci-app-camera-network_1.0.1-1_all.ipk
+outputs/luci-app-camera-network_*_all.ipk
 
 # Cache-busting deployment snapshots; index.js is the maintained source
 work/camera-network/root/www/luci-static/resources/view/camera-network/index-v*.js

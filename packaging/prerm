@@ -8,6 +8,7 @@ set -eu
 /etc/init.d/camera-network-monitor disable >/dev/null 2>&1 || true
 
 if [ "${PKG_UPGRADE:-0}" != "1" ]; then
+	/usr/sbin/camera-network-button remove
 	original=/www/index.html.camera-network-original
 	no_original=/www/index.html.camera-network-no-original
 	redirect=/usr/share/camera-network/index.html
