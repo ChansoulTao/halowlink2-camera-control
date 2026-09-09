@@ -26,6 +26,7 @@ const dismissedAlerts = new Set();
 const MAX_SIGNAL_SAMPLES = 150;
 const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 const deviceView = { query: '', filter: 'pinned' };
+let ledOperations = 0;
 const AP_CHART_COLORS = ['#59e3aa', '#6da9ff', '#f2b94b', '#d98bec', '#f47c7c', '#a2d85c'];
 const AP_CHART_COLORS_LIGHT = ['#087650', '#245fc7', '#9a6500', '#8a3fa0', '#b42318', '#5c7900'];
 const CAMERA_ADDRESS_SLOTS = Object.freeze([
@@ -131,7 +132,13 @@ body.camera-sidebar-hidden #mainmenu {
 .camera-dashboard .camera-ready-banner > strong { color:#f8fafc !important; }
 .camera-dashboard .camera-ready-no small { color:#ffe4a3 !important; }
 .camera-dashboard .camera-ready-yes small { color:#b7f7da !important; }
-.camera-dashboard .camera-led-control { display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
+.camera-dashboard .camera-led-control { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.65rem;padding:.75rem 1rem !important;margin-bottom:1rem; }
+.camera-dashboard .camera-led-brightness { grid-column:1/-1;min-width:0;width:100%;margin-top:.4rem; }
+.camera-dashboard .camera-led-brightness label { display:flex;align-items:center;justify-content:space-between;gap:.4rem;font-size:.72rem;color:var(--camera-slate); }
+.camera-dashboard .camera-led-brightness input { display:block;width:100%;min-width:0;height:28px;margin:0;accent-color:var(--camera-green,#179447);cursor:pointer; }
+.camera-dashboard .camera-led-brightness input:disabled { opacity:.45;cursor:wait; }
+.camera-dashboard .camera-live-light { min-width:100px; }
+.camera-dashboard .camera-live-light .camera-led-brightness { width:100px; }
 .camera-dashboard .camera-led-control > div:first-child { min-width:0; }
 .camera-dashboard .camera-led-control strong { display:block;color:var(--camera-navy); }
 .camera-dashboard .camera-led-control small { display:block;color:var(--camera-slate);overflow-wrap:anywhere;line-height:1.25; }
@@ -1156,6 +1163,7 @@ async function toggleAllLEDs(button) {
 	const enabled = uci.get('camera_network', 'settings', 'leds_enabled') !== '0';
 	const next = !enabled;
 	button.disabled = true;
+	ledOperations++;
 	try {
 		await fs.exec_direct('/usr/sbin/camera-network-leds', [next ? 'on' : 'off']);
 		uci.set('camera_network', 'settings', 'leds_enabled', next ? '1' : '0');
@@ -1174,8 +1182,48 @@ async function toggleAllLEDs(button) {
 	} catch (error) {
 		showCameraToast(_('Unable to change indicator lights'), true);
 	} finally {
+		ledOperations--;
 		button.disabled = false;
 	}
+}
+
+function renderLEDBrightness(identity) {
+	const section = identity ? cameraSection(identity.mac) : 'settings';
+	const option = identity ? 'remote_leds_brightness' : 'leds_brightness';
+	const raw = uci.get('camera_network', section, option);
+	let saved = /^\d{1,3}$/.test(String(raw)) && Number(raw) <= 100 ? String(Number(raw)) : '100';
+	const output = E('output', {}, `${saved}%`);
+	const input = E('input', {
+		type:'range', min:'0', max:'100', step:'1', value:saved,
+		'aria-label':identity ? _('Client indicator brightness') : _('Device indicator brightness'),
+		disabled:identity && !identity.ip,
+		input:() => { output.textContent = `${input.value}%`; },
+		change:async () => {
+			const next = String(input.value);
+			if (next === saved) return;
+			input.disabled = true;
+			ledOperations++;
+			try {
+				if (identity)
+					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [identity.ip, identity.mac, 'brightness', next]);
+				else
+					await fs.exec_direct('/usr/sbin/camera-network-leds', ['brightness', next]);
+				if (!uci.get('camera_network', section)) uci.add('camera_network', identity ? 'camera' : 'led_control', section);
+				uci.set('camera_network', section, option, next);
+				saved = next;
+			} catch (error) {
+				input.value = saved;
+				showCameraToast(_('Unable to change brightness — check the connection and Client software version'), true);
+			} finally {
+				output.textContent = `${saved}%`;
+				input.disabled = !!(identity && !identity.ip);
+				ledOperations--;
+			}
+		}
+	});
+	return E('div', { class:'camera-led-brightness', title:_('Wi-Fi light: HaLow signal. Purple light: LAN cable link and traffic. Settings survive reboot.') }, [
+		E('label', {}, [E('span', {}, _('Brightness')), output]), input
+	]);
 }
 
 function renderLEDControl() {
@@ -1190,7 +1238,8 @@ function renderLEDControl() {
 	]);
 	return E('div', { class:'cbi-section camera-led-control camera-config-only' }, [
 		E('div', {}, [E('strong', {}, _('Indicator lights')), E('small', {}, enabled ? _('Automatic network indication enabled') : _('All device lights are disabled'))]),
-		button
+		button,
+		renderLEDBrightness()
 	]);
 }
 
@@ -1211,7 +1260,8 @@ function renderSidebarLEDControl() {
 		E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.25rem' }, [
 			E('span', { class:'camera-side-metric-value', style:'margin:0' }, enabled ? _('Enabled') : _('Disabled')),
 			button
-		])
+		]),
+		renderLEDBrightness()
 	]);
 }
 
@@ -1489,11 +1539,11 @@ function renderRemoteClientLEDSwitch(identity, compact) {
 			const control = ev.currentTarget;
 			const next = !cameraProfile(mac).remoteLEDS;
 			control.disabled = true;
+			ledOperations++;
 			try {
 					await fs.exec_direct('/usr/sbin/camera-network-client-leds', [ip, mac, next ? 'on' : 'off']);
 					uci.set('camera_network', section, 'remote_leds_enabled', next ? '1' : '0');
 					uci.set('camera_network', section, 'last_ip', ip);
-				await uci.save();
 				control.className = `cbi-button camera-led-switch ${next ? 'camera-led-switch-on' : 'camera-led-switch-off'}`;
 				control.setAttribute('aria-pressed', next ? 'true' : 'false');
 				control.setAttribute('aria-label', next ? _('Disable Client lights') : _('Enable Client lights'));
@@ -1503,6 +1553,7 @@ function renderRemoteClientLEDSwitch(identity, compact) {
 			} catch (error) {
 				showCameraToast(_('Client control failed — check pairing and connection'), true);
 			} finally {
+				ledOperations--;
 				control.disabled = !ip;
 			}
 		}
@@ -1513,10 +1564,11 @@ function renderRemoteClientLEDSwitch(identity, compact) {
 	if (!ip)
 		button.disabled = true;
 	if (compact)
-		return E('div', { class:'camera-live-light' }, button);
-	return E('div', { style:'display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
+		return E('div', { class:'camera-live-light' }, [button, renderLEDBrightness(identity)]);
+	return E('div', { style:'display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.4rem;border-top:1px solid var(--camera-border);margin-top:.75rem;padding-top:.65rem' }, [
 		E('div', {}, [E('strong', { style:'display:block;font-size:.82rem' }, _('Client lights')), E('small', {}, ip || _('Management IP unavailable'))]),
-		button
+		button,
+		renderLEDBrightness(identity)
 	]);
 }
 
@@ -2899,7 +2951,7 @@ return view.extend({
 				? state.linkHistory.bootLinkSeconds
 				: (Number.isFinite(connectedTime) ? Math.max(0, uptime - connectedTime) : null);
 			const activeControl = document.activeElement;
-			const preserveInteraction = !force && ((root.contains(activeControl) && /^(INPUT|SELECT|TEXTAREA)$/.test(activeControl.tagName)) || Date.now() < interactionHoldUntil);
+			const preserveInteraction = ledOperations > 0 || (!force && ((root.contains(activeControl) && /^(INPUT|SELECT|TEXTAREA)$/.test(activeControl.tagName)) || Date.now() < interactionHoldUntil));
 			const statusStrip = E('div', { class:'camera-status-strip camera-status-strip-client' }, [
 				renderLEDControl(),
 				renderTemperaturePanel(state.boot.temperature, state.boot.thermalMitigation)

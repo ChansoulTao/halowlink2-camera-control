@@ -34,6 +34,8 @@ sh -n \
 	"$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip"
 
 "$ROOT_DIR/work/camera-network/root/usr/sbin/camera-network-static-ip" self-test
+(cd "$ROOT_DIR" && node scripts/test-leds.mjs)
+(cd "$ROOT_DIR" && node scripts/test-led-ui.mjs)
 
 node --check "$DASHBOARD_SOURCE"
 jq empty \

@@ -4,12 +4,12 @@
 
 ## 安装
 
-1. 将 `luci-app-camera-network_1.2.0-13_all.ipk` 上传到设备的 `/tmp/`。
+1. 将 `luci-app-camera-network_1.2.0-14_all.ipk` 上传到设备的 `/tmp/`。
 2. SSH 登录设备。全新的 Client 默认关闭 SSH 时，可在 LuCI 的 Software/软件包页面上传并安装 IPK；安装后会自动启用 SSH。
 3. 使用 SSH 时执行：
 
    ```sh
-   opkg install /tmp/luci-app-camera-network_1.2.0-13_all.ipk
+   opkg install /tmp/luci-app-camera-network_1.2.0-14_all.ipk
    ```
 
 4. 浏览器打开设备 IP。登录后会进入 Camera Network。
@@ -33,7 +33,7 @@ AP 和 Client 都应安装同一个 IPK。AP 提供总览和远程控制，Clien
 上传新版安装包后执行：
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-13_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-14_all.ipk
 ```
 
 已保存的摄影机名称、置顶状态和备注位于 `/etc/config/camera_network`，升级时会保留。
@@ -65,7 +65,10 @@ opkg remove luci-app-camera-network
 - 点击摄影机名称或 IP 地址可打开其 Camera Control 页面。
 - `Monitor` 适合 iPad 长时间监看。
 - 界面会自动跟随 iPad 或系统的浅色/深色外观；iPad 左侧导航仍可触控滚动，但不会显示多余滚动条。
-- 开启 Indicator lights 后，AP 与 Client 的 Status 灯会恢复为对应模式的常亮状态。
+- AP 和每台配对 Client 均可独立调节 0–100% 整体亮度；松开滑块后保存，重启保留。关闭灯光优先，重新开启恢复原亮度。
+- 原 Wi-Fi 灯显示 HaLow 信号：≥ −60 dBm 绿灯常亮；−70 至低于 −60 绿灯每 2 秒闪；−80 至低于 −70 黄灯每秒闪；低于 −80 红灯每秒闪两次；无有效连接信号时红灯每 2 秒短闪 0.1 秒。AP 显示最弱的已连接 Client，Client 显示自己到 AP 的信号。
+- 紫灯显示实体 LAN 网口：网线链路未建立时灭，有链路时常亮，收发数据时闪动。不使用内部 eth0、USB 或独立 WAN 网口的状态，也不代表相机控制已经可用。
+- Status 灯保持绿色常亮。颜色与闪烁由设备后台和系统灯光驱动处理，关闭网页后仍然工作。
 - 通电恢复数据从安装后台监测服务后的下一次完整启动开始最准确。
 - 不同固件版本可能需要调整 LuCI 或无线接口名称，安装前建议备份设备配置。
 

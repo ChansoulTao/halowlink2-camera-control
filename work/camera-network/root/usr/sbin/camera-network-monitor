@@ -261,5 +261,6 @@ while true; do
 		done
 	fi
 	write_state
+	/usr/sbin/camera-network-leds tick >/dev/null 2>&1
 	sleep 2
 done

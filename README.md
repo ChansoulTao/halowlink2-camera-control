@@ -17,7 +17,8 @@ pages.
 - Automatic Client-to-camera association
 - Reassignable A-D camera-position addresses (`192.168.12.50` through `.53`) with direct Web UI links
 - Reachability and latency checks
-- AP and remote Client indicator-light controls, including persistent Status LED restoration
+- AP and per-Client 0–100% indicator brightness and on/off controls, saved across reboot
+- Wi-Fi LED repurposed as a color/blink HaLow signal indicator; purple LED shows physical LAN link/activity
 - One-click remote Client pairing from the AP dashboard; the Client password is used once and never stored
 - Responsive interface that follows the iPad or system light/dark appearance, with unobtrusive touch scrolling
 - Dismissible warnings for weak links, offline devices, and high temperatures
@@ -42,13 +43,13 @@ and every Client that should support remote light control, then install it over
 SSH:
 
 ```sh
-opkg install /tmp/luci-app-camera-network_1.2.0-13_all.ipk
+opkg install /tmp/luci-app-camera-network_1.2.0-14_all.ipk
 ```
 
 To reinstall or upgrade:
 
 ```sh
-opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-13_all.ipk
+opkg install --force-reinstall /tmp/luci-app-camera-network_1.2.0-14_all.ipk
 ```
 
 Open the HaLowLink 2 address in a browser and sign in to LuCI. Camera Control
@@ -56,6 +57,29 @@ will be available from the main interface.
 
 See [the Chinese installation guide](outputs/Camera-Network-安装说明.md) for
 additional details.
+
+## Indicator lights
+
+The former Wi-Fi LED now reports HaLow RSSI. On an AP it shows the weakest
+currently associated Client; on a Client it shows its AP signal:
+
+| Signal | Color | Pattern |
+| --- | --- | --- |
+| ≥ −60 dBm | Green | Solid |
+| −70 to below −60 dBm | Green | 1 s on / 1 s off |
+| −80 to below −70 dBm | Yellow | 0.5 s on / 0.5 s off |
+| Below −80 dBm | Red | 0.25 s on / 0.25 s off |
+| No valid associated signal | Red | 0.1 s on / 1.9 s off |
+
+The purple LED follows the physical `lan` socket: off without carrier, on
+with carrier, and activity flashes on transmit/receive. It deliberately does
+not use the always-up internal `eth0`, USB, or the separate WAN port.
+It is a cable/link indicator, not proof that camera control is reachable.
+The remaining Status LED stays green. All three follow the saved brightness;
+the off switch takes priority, and re-enabling keeps the previous brightness.
+Brightness is saved when the slider is released, not on every drag step.
+The kernel handles blink/activity timing; a two-second background monitor
+updates the signal band even with the dashboard closed.
 
 ## Pair a new Client
 
